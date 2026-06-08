@@ -84,6 +84,31 @@ alter table public.campaigns drop constraint if exists campaigns_project_slug_un
 alter table public.campaigns add constraint campaigns_project_slug_unique unique (project_id, slug);
 create index if not exists campaigns_project_status_idx on public.campaigns (project_id, status, created_at);
 
+create table if not exists public.events (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  campaign_id uuid not null references public.campaigns(id) on delete cascade,
+  slug text not null unique,
+  name text not null,
+  description text,
+  prize_pool text,
+  prize_currency text,
+  reward_type text not null default 'top_leaderboard' check (reward_type in ('top_leaderboard', 'raffle', 'manual_selection', 'whitelist')),
+  rules text,
+  cover_image_url text,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  status text not null default 'active' check (status in ('active', 'draft', 'archived')),
+  is_featured boolean not null default false,
+  featured_rank integer,
+  created_at timestamptz not null default now(),
+  constraint events_featured_rank_check check (featured_rank is null or (featured_rank >= 1 and featured_rank <= 5))
+);
+
+create index if not exists events_status_dates_idx on public.events (status, starts_at, ends_at, created_at);
+create index if not exists events_project_campaign_idx on public.events (project_id, campaign_id);
+create index if not exists events_featured_sort_idx on public.events (is_featured, featured_rank, starts_at, created_at);
+
 create table if not exists public.users (
   id uuid primary key default gen_random_uuid(),
   wallet_address text not null unique,
@@ -261,6 +286,7 @@ alter table public.projects enable row level security;
 alter table public.platform_admins enable row level security;
 alter table public.project_members enable row level security;
 alter table public.campaigns enable row level security;
+alter table public.events enable row level security;
 alter table public.users enable row level security;
 alter table public.quests enable row level security;
 alter table public.user_quests enable row level security;
@@ -306,6 +332,18 @@ create policy "Campaigns can be created for MVP" on public.campaigns
 
 drop policy if exists "Campaigns can be updated for MVP" on public.campaigns;
 create policy "Campaigns can be updated for MVP" on public.campaigns
+  for update using (true) with check (true);
+
+drop policy if exists "Events are readable" on public.events;
+create policy "Events are readable" on public.events
+  for select using (true);
+
+drop policy if exists "Events can be created for MVP" on public.events;
+create policy "Events can be created for MVP" on public.events
+  for insert with check (true);
+
+drop policy if exists "Events can be updated for MVP" on public.events;
+create policy "Events can be updated for MVP" on public.events
   for update using (true) with check (true);
 
 drop policy if exists "Users are readable" on public.users;

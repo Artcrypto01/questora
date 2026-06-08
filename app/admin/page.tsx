@@ -2,9 +2,9 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
-import { Archive, ArrowLeft, ArrowRight, CheckCircle2, Download, FolderPlus, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
-import { createCampaign, createProject, createQuest, getAdminContext, getManageableCampaigns, getManageableProjects, getManageableQuests, getQualifiedUsers, getQuestSubmissions, reviewProject, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
-import type { AdminContext, Campaign, CampaignInput, Project, ProjectInput, ProjectType, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
+import { Archive, ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Download, FolderPlus, Gift, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
+import { createCampaign, createEvent, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableProjects, getManageableQuests, getQualifiedUsers, getQuestSubmissions, reviewProject, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
+import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventRewardType, Project, ProjectInput, ProjectType, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, fromDatetimeLocalValue, isQuestEnded, toDatetimeLocalValue } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp, difficultyLabels, getQuestXpPolicy, questTypeLabels } from "@/lib/xp-policy";
 
@@ -12,11 +12,19 @@ const projectTypes: ProjectType[] = ["NFT", "Meme", "AI", "DeFi", "Gaming", "DAO
 const questTypes = Object.keys(questTypeLabels) as QuestType[];
 const questDifficulties = Object.keys(difficultyLabels) as QuestDifficulty[];
 const campaignPurposes = ["NFT whitelist", "Early access", "Community rewards", "Beta tester selection", "Contributor tracking", "Leaderboard rewards"];
+const eventRewardTypeLabels: Record<EventRewardType, string> = {
+  top_leaderboard: "Top leaderboard",
+  raffle: "Raffle",
+  manual_selection: "Manual selection",
+  whitelist: "Whitelist"
+};
+const eventRewardTypes = Object.keys(eventRewardTypeLabels) as EventRewardType[];
 const questWizardSteps = ["Project", "Purpose", "Task", "Reward", "Preview"];
 const studioTabs = [
   { id: "overview", label: "Overview" },
   { id: "projects", label: "Projects" },
   { id: "campaigns", label: "Campaigns" },
+  { id: "events", label: "Events" },
   { id: "quests", label: "Quests" },
   { id: "submissions", label: "Submissions" },
   { id: "exports", label: "Exports" }
@@ -198,6 +206,24 @@ const initialCampaignForm: CampaignInput = {
   status: "active"
 };
 
+const initialEventForm: EventInput = {
+  project_id: "",
+  campaign_id: "",
+  slug: "",
+  name: "",
+  description: "",
+  prize_pool: "",
+  prize_currency: "USDC",
+  reward_type: "top_leaderboard",
+  rules: "",
+  cover_image_url: "",
+  starts_at: null,
+  ends_at: null,
+  status: "active",
+  is_featured: false,
+  featured_rank: null
+};
+
 const initialProjectForm: ProjectInput = {
   name: "",
   slug: "",
@@ -218,6 +244,7 @@ export default function AdminPage() {
   const [adminContext, setAdminContext] = useState<AdminContext | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
   const [managedQuests, setManagedQuests] = useState<Quest[]>([]);
   const [submissions, setSubmissions] = useState<UserQuest[]>([]);
   const [qualifiedUsers, setQualifiedUsers] = useState<QualifiedUser[]>([]);
@@ -226,6 +253,7 @@ export default function AdminPage() {
   const [minimumQualifiedQuests, setMinimumQualifiedQuests] = useState(1);
   const [projectForm, setProjectForm] = useState(initialProjectForm);
   const [campaignForm, setCampaignForm] = useState(initialCampaignForm);
+  const [eventForm, setEventForm] = useState(initialEventForm);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editProjectForm, setEditProjectForm] = useState(initialProjectForm);
   const [curationForms, setCurationForms] = useState<Record<string, { featured_rank: string; featured_until: string }>>({});
@@ -240,14 +268,19 @@ export default function AdminPage() {
   const selectedProject = projects.find((project) => project.id === form.project_id);
   const selectedCampaign = campaigns.find((campaign) => campaign.id === form.campaign_id);
   const selectedCampaignProject = projects.find((project) => project.id === campaignForm.project_id);
+  const selectedEventProject = projects.find((project) => project.id === eventForm.project_id);
+  const selectedEventCampaign = campaigns.find((campaign) => campaign.id === eventForm.campaign_id);
   const projectCampaigns = campaigns.filter((campaign) => campaign.project_id === form.project_id && campaign.status !== "archived");
+  const eventProjectCampaigns = campaigns.filter((campaign) => campaign.project_id === eventForm.project_id && campaign.status !== "archived");
   const canCreateQuest = Boolean(selectedProject && selectedProject.status === "active");
   const canCreateCampaign = Boolean(selectedCampaignProject && selectedCampaignProject.status === "active");
+  const canCreateEvent = Boolean(selectedEventProject && selectedEventProject.status === "active" && selectedEventCampaign);
   const xpPolicy = getQuestXpPolicy(form.quest_type, form.difficulty);
   const globalXpReward = calculateGlobalXp(form.xp_reward, form.quest_type, form.difficulty);
   const pendingSubmissionsCount = submissions.filter((submission) => submission.status === "submitted").length;
   const pendingProjectsCount = projects.filter((project) => project.status === "draft").length;
   const activeQuestsCount = managedQuests.filter((quest) => quest.status === "active" && !isQuestEnded(quest.ends_at)).length;
+  const liveEventsCount = events.filter((event) => event.status === "active" && (!event.ends_at || !isQuestEnded(event.ends_at))).length;
   const filteredQualifiedUsers = useMemo(
     () =>
       qualifiedUsers.filter(
@@ -310,6 +343,7 @@ export default function AdminPage() {
       setAdminContext(null);
       setProjects([]);
       setCampaigns([]);
+      setEvents([]);
       setManagedQuests([]);
       setSubmissions([]);
       setQualifiedUsers([]);
@@ -327,13 +361,24 @@ export default function AdminPage() {
         ...current,
         project_id: current.project_id || projectRows[0]?.id || ""
       }));
+      setEventForm((current) => ({
+        ...current,
+        project_id: current.project_id || projectRows[0]?.id || ""
+      }));
     });
     getManageableCampaigns(address)
-      .then(setCampaigns)
+      .then((campaignRows) => {
+        setCampaigns(campaignRows);
+        setEventForm((current) => ({
+          ...current,
+          campaign_id: current.campaign_id || campaignRows.find((campaign) => campaign.project_id === current.project_id)?.id || campaignRows[0]?.id || ""
+        }));
+      })
       .catch((error) => {
         setCampaigns([]);
         setMessage(error instanceof Error ? error.message : "Failed to load campaigns.");
       });
+    getManageableEvents(address).then(setEvents).catch(() => setEvents([]));
     getManageableQuests(address).then(setManagedQuests);
     getQuestSubmissions(address).then(setSubmissions);
     getQualifiedUsers(address).then(setQualifiedUsers);
@@ -368,6 +413,7 @@ export default function AdminPage() {
     setProjects((current) => [project, ...current]);
     setForm((current) => ({ ...current, project_id: project.id }));
     setCampaignForm((current) => ({ ...current, project_id: project.id }));
+    setEventForm((current) => ({ ...current, project_id: project.id }));
     setProjectForm(initialProjectForm);
     setMessage(project.status === "active" ? "Project created and active." : "Project submitted. Platform admin must approve it before it appears publicly.");
   }
@@ -430,6 +476,50 @@ export default function AdminPage() {
       setMessage("Campaign created. You can now assign quests to it.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to create campaign.");
+    }
+  }
+
+  useEffect(() => {
+    setEventForm((current) => {
+      if (!current.project_id) return current;
+      const campaignStillMatches = campaigns.some((campaign) => campaign.id === current.campaign_id && campaign.project_id === current.project_id);
+      if (campaignStillMatches) return current;
+      return {
+        ...current,
+        campaign_id: campaigns.find((campaign) => campaign.project_id === current.project_id && campaign.status !== "archived")?.id || ""
+      };
+    });
+  }, [campaigns, eventForm.project_id]);
+
+  async function handleEventSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!address) {
+      setMessage("Connect a project owner wallet before creating events.");
+      return;
+    }
+
+    if (!canCreateEvent) {
+      setMessage("Select an approved project and campaign before creating an event.");
+      return;
+    }
+
+    if (eventForm.ends_at && isQuestEnded(eventForm.ends_at)) {
+      setMessage("Event end date must be in the future.");
+      return;
+    }
+
+    try {
+      const createdEvent = await createEvent(eventForm, address);
+      setEvents((current) => [createdEvent, ...current]);
+      setEventForm({
+        ...initialEventForm,
+        project_id: createdEvent.project_id,
+        campaign_id: createdEvent.campaign_id,
+        prize_currency: eventForm.prize_currency || "USDC"
+      });
+      setMessage("Event created. It is now visible on the events section.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to create event.");
     }
   }
 
@@ -646,6 +736,38 @@ export default function AdminPage() {
     setMessage(`Downloaded ${filteredQualifiedUsers.length} qualified users.`);
   }
 
+  async function downloadEventWinnersCsv(event: Event) {
+    const winners = await getEventLeaderboard(event.id, 100);
+    if (winners.length === 0) {
+      setMessage("No approved event participants yet.");
+      return;
+    }
+
+    const rows = [
+      ["rank", "wallet_address", "display_name", "event_xp", "approved_quests", "event_name", "project_name"],
+      ...winners.map((user, index) => [
+        index + 1,
+        user.wallet_address,
+        user.display_name ?? "",
+        user.total_xp,
+        user.completed_quests ?? 0,
+        event.name,
+        event.project_name ?? ""
+      ])
+    ];
+    const csv = rows.map((row) => row.map(csvCell).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `questora-event-winners-${event.slug}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMessage(`Downloaded ${winners.length} event participants.`);
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
       <p className="font-semibold text-cyan-200">Studio</p>
@@ -703,7 +825,7 @@ export default function AdminPage() {
         </div>
       </section>
 
-          <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
+          <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-6">
             <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
               <p className="text-xs font-black uppercase tracking-wider text-blue-200">Projects</p>
               <p className="mt-2 text-3xl font-black text-white">{projects.length}</p>
@@ -713,6 +835,11 @@ export default function AdminPage() {
               <p className="text-xs font-black uppercase tracking-wider text-blue-200">Campaigns</p>
               <p className="mt-2 text-3xl font-black text-white">{campaigns.length}</p>
               <p className="mt-1 text-xs font-semibold text-blue-200">Across owned projects</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
+              <p className="text-xs font-black uppercase tracking-wider text-blue-200">Live events</p>
+              <p className="mt-2 text-3xl font-black text-white">{liveEventsCount}</p>
+              <p className="mt-1 text-xs font-semibold text-blue-200">{events.length} total events</p>
             </div>
             <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
               <p className="text-xs font-black uppercase tracking-wider text-blue-200">Active quests</p>
@@ -1859,6 +1986,234 @@ export default function AdminPage() {
                       </div>
                       <div className="rounded-lg bg-white/10 px-4 py-3 text-sm font-black text-cyan-200">
                         {managedQuests.filter((quest) => quest.campaign_id === campaign.id).length} quests
+                      </div>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {activeStudioTab === "events" ? (
+        <>
+          <form onSubmit={handleEventSubmit} className="mt-8 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
+            <div className="flex items-center gap-3">
+              <Gift className="text-cyan-200" />
+              <div>
+                <h2 className="text-xl font-black text-white">Create event</h2>
+                <p className="mt-1 text-sm font-semibold text-blue-100">Turn a campaign into a public event with a prize pool, deadline, and event leaderboard.</p>
+              </div>
+            </div>
+            <div className="mt-5 grid gap-5">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Project</span>
+                  <select
+                    required
+                    value={eventForm.project_id}
+                    onChange={(event) => setEventForm({ ...eventForm, project_id: event.target.value, campaign_id: campaigns.find((campaign) => campaign.project_id === event.target.value)?.id || "" })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    <option value="">Select project</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name} - {project.status === "active" ? "active" : "waiting approval"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Campaign</span>
+                  <select
+                    required
+                    value={eventForm.campaign_id}
+                    onChange={(event) => setEventForm({ ...eventForm, campaign_id: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    <option value="">Select campaign</option>
+                    {eventProjectCampaigns.map((campaign) => (
+                      <option key={campaign.id} value={campaign.id}>
+                        {campaign.name}
+                      </option>
+                    ))}
+                  </select>
+                  {eventProjectCampaigns.length === 0 ? <span className="text-xs font-semibold text-cyan-200">Create a campaign before launching an event.</span> : null}
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Event name</span>
+                  <input
+                    required
+                    value={eventForm.name}
+                    onChange={(event) => setEventForm({ ...eventForm, name: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="Launch Sprint"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Slug</span>
+                  <input
+                    value={eventForm.slug}
+                    onChange={(event) => setEventForm({ ...eventForm, slug: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="launch-sprint"
+                  />
+                </label>
+              </div>
+
+              <label className="grid gap-2">
+                <span className="text-sm font-bold text-blue-100">Description</span>
+                <textarea
+                  value={eventForm.description ?? ""}
+                  onChange={(event) => setEventForm({ ...eventForm, description: event.target.value })}
+                  className="focus-ring min-h-24 rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                  placeholder="Describe the event, who should join, and what contributors can win."
+                />
+              </label>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Prize pool</span>
+                  <input
+                    value={eventForm.prize_pool ?? ""}
+                    onChange={(event) => setEventForm({ ...eventForm, prize_pool: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="500"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Currency / prize</span>
+                  <input
+                    value={eventForm.prize_currency ?? ""}
+                    onChange={(event) => setEventForm({ ...eventForm, prize_currency: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="USDC, NFT, WL spots"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Reward method</span>
+                  <select
+                    value={eventForm.reward_type}
+                    onChange={(event) => setEventForm({ ...eventForm, reward_type: event.target.value as EventRewardType })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    {eventRewardTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {eventRewardTypeLabels[type]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Status</span>
+                  <select
+                    value={eventForm.status}
+                    onChange={(event) => setEventForm({ ...eventForm, status: event.target.value as QuestStatus })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    <option value="active">Active</option>
+                    <option value="draft">Draft</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Starts</span>
+                  <input
+                    type="datetime-local"
+                    value={toDatetimeLocalValue(eventForm.starts_at)}
+                    onChange={(event) => setEventForm({ ...eventForm, starts_at: fromDatetimeLocalValue(event.target.value) })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Ends</span>
+                  <input
+                    type="datetime-local"
+                    value={toDatetimeLocalValue(eventForm.ends_at)}
+                    onChange={(event) => setEventForm({ ...eventForm, ends_at: fromDatetimeLocalValue(event.target.value) })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  />
+                </label>
+              </div>
+
+              <label className="grid gap-2">
+                <span className="text-sm font-bold text-blue-100">Cover image URL</span>
+                <input
+                  value={eventForm.cover_image_url ?? ""}
+                  onChange={(event) => setEventForm({ ...eventForm, cover_image_url: event.target.value })}
+                  className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                  placeholder="https://..."
+                />
+              </label>
+              <label className="grid gap-2">
+                <span className="text-sm font-bold text-blue-100">Rules</span>
+                <textarea
+                  value={eventForm.rules ?? ""}
+                  onChange={(event) => setEventForm({ ...eventForm, rules: event.target.value })}
+                  className="focus-ring min-h-24 rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                  placeholder="Explain winner selection, eligibility, and any prize distribution rules."
+                />
+              </label>
+            </div>
+            <button
+              type="submit"
+              disabled={!canCreateEvent}
+              className="focus-ring mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-base-blue px-5 py-3 font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+            >
+              <Gift size={20} />
+              Create event
+            </button>
+            {message ? <p className="mt-4 text-sm font-semibold text-cyan-200">{message}</p> : null}
+          </form>
+
+          <section className="mt-6 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
+            <div className="flex items-center gap-3">
+              <CalendarDays className="text-cyan-200" />
+              <h2 className="text-xl font-black text-white">Manage events</h2>
+            </div>
+            <div className="mt-5 grid gap-3">
+              {!isConnected ? (
+                <p className="text-blue-100">Connect a project owner wallet to manage events.</p>
+              ) : events.length === 0 ? (
+                <p className="text-blue-100">No events yet. Create one from a campaign to make it visible publicly.</p>
+              ) : (
+                events.map((event) => (
+                  <article key={event.id} className="rounded-lg border border-white/10 bg-white/10 p-4">
+                    <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+                      <div>
+                        <div className="flex flex-wrap gap-2">
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-wider text-base-blue">{event.project_name ?? "Project"}</span>
+                          <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-950">{event.status}</span>
+                          <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{eventRewardTypeLabels[event.reward_type]}</span>
+                        </div>
+                        <h3 className="mt-3 font-black text-white">{event.name}</h3>
+                        <p className="mt-1 text-sm leading-6 text-blue-100">{event.description || "No event description yet."}</p>
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-blue-200">
+                          <span>/{event.slug}</span>
+                          {event.campaign_name ? <span>Campaign: {event.campaign_name}</span> : null}
+                          {event.prize_pool ? <span>Prize: {event.prize_pool} {event.prize_currency}</span> : null}
+                          {event.ends_at ? <span>Ends {formatQuestDeadline(event.ends_at)}</span> : null}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 md:justify-end">
+                        <a href={`/events/${encodeURIComponent(event.slug)}`} className="focus-ring inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-black text-base-blue">
+                          View
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => downloadEventWinnersCsv(event)}
+                          className="focus-ring inline-flex items-center gap-2 rounded-lg bg-cyan-200 px-3 py-2 text-sm font-black text-slate-950"
+                        >
+                          <Download size={16} />
+                          Winners CSV
+                        </button>
                       </div>
                     </div>
                   </article>

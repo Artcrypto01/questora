@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
-import { Badge, CheckCircle2, ListFilter, Loader2, Search, ShieldCheck, Sparkles, Star } from "lucide-react";
+import { Badge, CalendarDays, CheckCircle2, Gift, ListFilter, Loader2, Search, ShieldCheck, Sparkles, Star } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
 import { QuestCard } from "@/components/QuestCard";
 import { StatCard } from "@/components/StatCard";
-import { getOrCreateUser, getProjects, getQuests, getUserCompletions, completeQuest } from "@/lib/quest-service";
-import type { Project, ProjectType, Quest, UserProfile, UserQuest } from "@/lib/types";
+import { getEvents, getOrCreateUser, getProjects, getQuests, getUserCompletions, completeQuest } from "@/lib/quest-service";
+import type { Event, Project, ProjectType, Quest, UserProfile, UserQuest } from "@/lib/types";
+import { formatQuestDeadline } from "@/lib/utils";
 
 const projectTypes: Array<"All" | ProjectType> = ["All", "NFT", "Meme", "AI", "DeFi", "Gaming", "DAO", "Social", "Education", "Tooling", "Other"];
 
@@ -19,6 +20,7 @@ function isProjectFeaturedActive(project: Project) {
 export default function DashboardPage() {
   const { address, isConnected } = useAccount();
   const [projects, setProjects] = useState<Project[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
   const [quests, setQuests] = useState<Quest[]>([]);
   const [submissions, setSubmissions] = useState<Map<string, UserQuest>>(new Map());
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -34,8 +36,9 @@ export default function DashboardPage() {
 
     async function load() {
       setLoading(true);
-      const [projectRows, questRows, userRow] = await Promise.all([
+      const [projectRows, eventRows, questRows, userRow] = await Promise.all([
         getProjects(),
+        getEvents(6),
         getQuests(),
         address ? getOrCreateUser(address) : Promise.resolve(null)
       ]);
@@ -44,6 +47,7 @@ export default function DashboardPage() {
 
       if (active) {
         setProjects(projectRows);
+        setEvents(eventRows);
         setQuests(questRows);
         setUser(userRow);
         setSubmissions(new Map(completions.map((item) => [item.quest_id, item])));
@@ -129,6 +133,49 @@ export default function DashboardPage() {
         <StatCard icon={CheckCircle2} label="Approved" value={`${Array.from(submissions.values()).filter((item) => item.status === "approved" && item.reviewed_at).length}/${quests.length}`} />
         <StatCard icon={Badge} label="In review" value={Array.from(submissions.values()).filter((item) => item.status === "submitted").length.toString()} />
       </div>
+
+      {events.length > 0 ? (
+        <section className="mt-8">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-xl font-black text-white">Live events</h2>
+            <span className="text-sm font-semibold text-blue-100">Prize campaigns</span>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+            {events.map((event) => (
+              <Link key={event.id} href={`/events/${encodeURIComponent(event.slug)}`} className="focus-ring overflow-hidden rounded-lg border border-cyan-200/20 bg-[#0b1730]/92 shadow-glow transition hover:-translate-y-0.5 hover:border-cyan-200/70">
+                <div className="relative h-32 bg-base-blue">
+                  <ProjectImage src={event.cover_image_url} name={event.name} variant="cover" />
+                  <span className="absolute left-3 top-3 rounded-full bg-cyan-200 px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">
+                    {event.is_featured ? "Featured event" : "Live event"}
+                  </span>
+                </div>
+                <div className="p-4">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-base-blue">
+                      <ProjectImage src={event.project_logo_url} name={event.project_name || event.name} variant="logo" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-bold uppercase tracking-wider text-cyan-200">{event.project_name ?? "Project"}</p>
+                      <h3 className="truncate font-black text-white">{event.name}</h3>
+                    </div>
+                  </div>
+                  <p className="mt-3 line-clamp-2 text-sm leading-6 text-blue-100">{event.description || "Compete in approved quests and climb the event leaderboard."}</p>
+                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs font-bold text-blue-100">
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-3 py-2">
+                      <Gift size={14} className="text-cyan-200" />
+                      {event.prize_pool ? `${event.prize_pool} ${event.prize_currency ?? ""}` : "Prize TBA"}
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-3 py-2">
+                      <CalendarDays size={14} className="text-cyan-200" />
+                      {event.ends_at ? formatQuestDeadline(event.ends_at) : "Open"}
+                    </span>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="mt-8">
         <div className="flex items-center justify-between gap-4">

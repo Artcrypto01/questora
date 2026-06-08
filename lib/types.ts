@@ -190,6 +190,59 @@ export type Campaign = {
 
 export type CampaignInput = Pick<Campaign, "project_id" | "slug" | "name" | "description" | "purpose" | "starts_at" | "ends_at" | "status">;
 
+export type EventRewardType = "top_leaderboard" | "raffle" | "manual_selection" | "whitelist";
+
+export type Event = {
+  id: string;
+  project_id: string;
+  campaign_id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  prize_pool: string | null;
+  prize_currency: string | null;
+  reward_type: EventRewardType;
+  rules: string | null;
+  cover_image_url: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  status: QuestStatus;
+  is_featured: boolean;
+  featured_rank: number | null;
+  created_at?: string;
+  project_name?: string;
+  project_slug?: string;
+  project_logo_url?: string | null;
+  project_type?: ProjectType;
+  campaign_name?: string;
+};
+
+export type EventInput = Pick<
+  Event,
+  | "project_id"
+  | "campaign_id"
+  | "slug"
+  | "name"
+  | "description"
+  | "prize_pool"
+  | "prize_currency"
+  | "reward_type"
+  | "rules"
+  | "cover_image_url"
+  | "starts_at"
+  | "ends_at"
+  | "status"
+  | "is_featured"
+  | "featured_rank"
+>;
+
+export type EventStats = {
+  questCount: number;
+  participantCount: number;
+  approvedCount: number;
+  totalXp: number;
+};
+
 export type NotificationType = "submission_created" | "submission_approved" | "submission_rejected" | "project_approved" | "project_rejected";
 
 export type Notification = {

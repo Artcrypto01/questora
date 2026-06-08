@@ -1,6 +1,6 @@
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import { seedCompletions, seedProjects, seedQuests, seedUsers } from "@/lib/seed-data";
-import type { AdminContext, Campaign, CampaignInput, LeaderboardRank, Notification, NotificationType, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
+import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventStats, LeaderboardRank, Notification, NotificationType, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
 import { getImageUrl, isQuestEnded, normalizeWallet, normalizeXUsername } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp } from "@/lib/xp-policy";
 
@@ -11,6 +11,7 @@ let localCompletions = [...seedCompletions];
 let localProjectMembers: ProjectMember[] = [];
 let localCampaigns: Campaign[] = [];
 let localNotifications: Notification[] = [];
+let localEvents: Event[] = [];
 
 function assertSupabase() {
   if (!supabase) {
@@ -69,6 +70,18 @@ type QualifiedUserRow = {
     | null;
 };
 
+type EventWithJoins = Event & {
+  projects?: {
+    name: string;
+    slug: string;
+    logo_url?: string | null;
+    project_type?: Project["project_type"];
+  } | null;
+  campaigns?: {
+    name: string;
+  } | null;
+};
+
 function sumCompletedQuestXp(rows: UserQuestWithQuest[]) {
   return rows.reduce((total, row) => total + (row.quests?.global_xp_reward ?? row.global_xp_awarded ?? row.quests?.xp_reward ?? row.xp_awarded ?? 0), 0);
 }
@@ -111,6 +124,49 @@ function sortProjects(projects: Project[]) {
     }
     if (a.is_verified !== b.is_verified) return a.is_verified ? -1 : 1;
     return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
+  });
+}
+
+function hydrateEventJoins(event: Event, projects = localProjects, campaigns = localCampaigns): Event {
+  const project = projects.find((item) => item.id === event.project_id);
+  const campaign = campaigns.find((item) => item.id === event.campaign_id);
+  return {
+    ...event,
+    project_name: event.project_name ?? project?.name,
+    project_slug: event.project_slug ?? project?.slug,
+    project_logo_url: event.project_logo_url ?? project?.logo_url,
+    project_type: event.project_type ?? project?.project_type,
+    campaign_name: event.campaign_name ?? campaign?.name
+  };
+}
+
+function mapEvent(row: EventWithJoins): Event {
+  return {
+    ...row,
+    project_name: row.projects?.name ?? row.project_name,
+    project_slug: row.projects?.slug ?? row.project_slug,
+    project_logo_url: row.projects?.logo_url ?? row.project_logo_url,
+    project_type: row.projects?.project_type ?? row.project_type,
+    campaign_name: row.campaigns?.name ?? row.campaign_name
+  };
+}
+
+function isEventVisible(event: Pick<Event, "status" | "ends_at">) {
+  return event.status === "active" && (!event.ends_at || new Date(event.ends_at).getTime() > Date.now());
+}
+
+function sortEvents(events: Event[]) {
+  return [...events].sort((a, b) => {
+    const aFeatured = a.is_featured && isEventVisible(a);
+    const bFeatured = b.is_featured && isEventVisible(b);
+    if (aFeatured !== bFeatured) return aFeatured ? -1 : 1;
+    if (aFeatured && bFeatured) {
+      const rankDiff = (a.featured_rank ?? 999) - (b.featured_rank ?? 999);
+      if (rankDiff !== 0) return rankDiff;
+    }
+    const aDate = new Date(a.starts_at ?? a.created_at ?? 0).getTime();
+    const bDate = new Date(b.starts_at ?? b.created_at ?? 0).getTime();
+    return bDate - aDate;
   });
 }
 
@@ -743,6 +799,232 @@ export async function createCampaign(input: CampaignInput, actorWalletAddress?: 
     ...data,
     project_name: (await getAllProjectsForAdmin(actorWalletAddress)).find((item) => item.id === data.project_id)?.name
   };
+}
+
+export async function getEvents(limit = 6): Promise<Event[]> {
+  if (!hasSupabaseConfig) {
+    return sortEvents(localEvents.map((event) => hydrateEventJoins(event)).filter(isEventVisible)).slice(0, limit);
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("events")
+    .select("*, projects(name, slug, logo_url, project_type), campaigns(name)")
+    .eq("status", "active")
+    .order("is_featured", { ascending: false })
+    .order("featured_rank", { ascending: true })
+    .order("starts_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+    if (message.includes("events") || error.code === "42P01") return [];
+    throw new Error(formatDatabaseError(error, "Failed to load events."));
+  }
+
+  return sortEvents(((data ?? []) as EventWithJoins[]).map(mapEvent).filter(isEventVisible));
+}
+
+export async function getManageableEvents(actorWalletAddress?: string | null): Promise<Event[]> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context) return [];
+
+  if (!hasSupabaseConfig) {
+    return sortEvents(
+      localEvents
+        .filter((event) => context.is_platform_admin || context.project_ids.includes(event.project_id))
+        .map((event) => hydrateEventJoins(event))
+    );
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("events")
+    .select("*, projects(name, slug, logo_url, project_type), campaigns(name)")
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(formatDatabaseError(error, "Failed to load events."));
+  return sortEvents(
+    ((data ?? []) as EventWithJoins[])
+      .map(mapEvent)
+      .filter((event) => context.is_platform_admin || context.project_ids.includes(event.project_id))
+  );
+}
+
+export async function createEvent(input: EventInput, actorWalletAddress?: string | null): Promise<Event> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context || !hasProjectAccess(context, input.project_id)) {
+    throw new Error("You do not have permission to create events for this project.");
+  }
+
+  const eventInput = {
+    ...input,
+    slug: slugify(input.slug || input.name),
+    description: input.description?.trim() || null,
+    prize_pool: input.prize_pool?.trim() || null,
+    prize_currency: input.prize_currency?.trim() || null,
+    rules: input.rules?.trim() || null,
+    cover_image_url: getImageUrl(input.cover_image_url) || null,
+    starts_at: input.starts_at || null,
+    ends_at: input.ends_at || null,
+    featured_rank: input.is_featured ? input.featured_rank : null
+  };
+
+  if (!hasSupabaseConfig) {
+    const project = localProjects.find((item) => item.id === eventInput.project_id);
+    const campaign = localCampaigns.find((item) => item.id === eventInput.campaign_id);
+    if (project?.status !== "active") throw new Error("Project must be approved before events can be created.");
+    if (!campaign || campaign.project_id !== eventInput.project_id) throw new Error("Selected campaign does not belong to this project.");
+
+    const event = hydrateEventJoins({
+      id: crypto.randomUUID(),
+      ...eventInput,
+      created_at: new Date().toISOString()
+    });
+    localEvents = [event, ...localEvents];
+    return event;
+  }
+
+  const client = assertSupabase();
+  const [{ data: project, error: projectError }, { data: campaign, error: campaignError }] = await Promise.all([
+    client.from("projects").select("id, status").eq("id", eventInput.project_id).single(),
+    client.from("campaigns").select("id, project_id").eq("id", eventInput.campaign_id).single()
+  ]);
+
+  if (projectError) throw new Error(formatDatabaseError(projectError, "Failed to load selected project."));
+  if (campaignError) throw new Error(formatDatabaseError(campaignError, "Failed to load selected campaign."));
+  if (project.status !== "active") throw new Error("Project must be approved before events can be created.");
+  if (campaign.project_id !== eventInput.project_id) throw new Error("Selected campaign does not belong to this project.");
+
+  const { data, error } = await client.from("events").insert(eventInput).select("*, projects(name, slug, logo_url, project_type), campaigns(name)").single();
+  if (error) throw new Error(formatDatabaseError(error, "Failed to create event."));
+  return mapEvent(data as EventWithJoins);
+}
+
+export async function getEventBySlug(slug: string): Promise<Event | null> {
+  const normalizedSlug = decodeURIComponent(slug).trim().toLowerCase();
+  if (!normalizedSlug) return null;
+
+  if (!hasSupabaseConfig) {
+    const event = localEvents.find((item) => item.slug === normalizedSlug || item.id === normalizedSlug);
+    return event ? hydrateEventJoins(event) : null;
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("events")
+    .select("*, projects(name, slug, logo_url, project_type), campaigns(name)")
+    .eq("slug", normalizedSlug)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? mapEvent(data as EventWithJoins) : null;
+}
+
+export async function getEventStats(eventId: string): Promise<EventStats> {
+  const event = !hasSupabaseConfig ? localEvents.find((item) => item.id === eventId) : await getEventRecord(eventId);
+  if (!event) return { questCount: 0, participantCount: 0, approvedCount: 0, totalXp: 0 };
+
+  if (!hasSupabaseConfig) {
+    const eventQuestIds = new Set(localQuests.filter((quest) => quest.campaign_id === event.campaign_id).map((quest) => quest.id));
+    const approved = localCompletions.filter((completion) => eventQuestIds.has(completion.quest_id) && completion.status === "approved" && completion.reviewed_at);
+    return {
+      questCount: eventQuestIds.size,
+      participantCount: new Set(approved.map((completion) => completion.user_id)).size,
+      approvedCount: approved.length,
+      totalXp: approved.reduce((total, completion) => total + completion.xp_awarded, 0)
+    };
+  }
+
+  const client = assertSupabase();
+  const [{ data: quests, error: questError }, { data: completions, error: completionError }] = await Promise.all([
+    client.from("quests").select("id").eq("campaign_id", event.campaign_id).neq("status", "archived"),
+    client.from("user_quests").select("user_id, xp_awarded, quests!inner(campaign_id)").eq("status", "approved").not("reviewed_at", "is", null).eq("quests.campaign_id", event.campaign_id)
+  ]);
+
+  if (questError) throw questError;
+  if (completionError) throw completionError;
+
+  const rows = (completions ?? []) as Array<{ user_id: string; xp_awarded: number }>;
+  return {
+    questCount: quests?.length ?? 0,
+    participantCount: new Set(rows.map((row) => row.user_id)).size,
+    approvedCount: rows.length,
+    totalXp: rows.reduce((total, row) => total + (row.xp_awarded ?? 0), 0)
+  };
+}
+
+async function getEventRecord(eventId: string): Promise<Event | null> {
+  const { data, error } = await assertSupabase().from("events").select("*").eq("id", eventId).maybeSingle();
+  if (error) throw error;
+  return data as Event | null;
+}
+
+export async function getEventLeaderboard(eventId: string, limit = 50): Promise<UserProfile[]> {
+  const event = !hasSupabaseConfig ? localEvents.find((item) => item.id === eventId) : await getEventRecord(eventId);
+  if (!event) return [];
+
+  if (!hasSupabaseConfig) {
+    const eventQuestIds = new Set(localQuests.filter((quest) => quest.campaign_id === event.campaign_id).map((quest) => quest.id));
+    const rows = new Map<string, UserProfile>();
+    for (const completion of localCompletions.filter((item) => eventQuestIds.has(item.quest_id) && item.status === "approved" && item.reviewed_at)) {
+      const user = localUsers.find((item) => item.id === completion.user_id);
+      if (!user) continue;
+      const existing = rows.get(user.id);
+      rows.set(user.id, {
+        ...user,
+        total_xp: (existing?.total_xp ?? 0) + completion.xp_awarded,
+        completed_quests: (existing?.completed_quests ?? 0) + 1
+      });
+    }
+    return Array.from(rows.values()).sort((a, b) => b.total_xp - a.total_xp).slice(0, limit);
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("user_quests")
+    .select("xp_awarded, users(id, wallet_address, display_name, avatar_url, x_username, discord_username, bio, created_at), quests!inner(campaign_id)")
+    .eq("status", "approved")
+    .not("reviewed_at", "is", null)
+    .eq("quests.campaign_id", event.campaign_id);
+
+  if (error) throw error;
+
+  type EventLeaderboardRow = {
+    xp_awarded: number;
+    users:
+      | {
+          id: string;
+          wallet_address: string;
+          display_name: string | null;
+          avatar_url: string | null;
+          x_username: string | null;
+          discord_username: string | null;
+          bio: string | null;
+          created_at?: string;
+        }
+      | Array<{
+          id: string;
+          wallet_address: string;
+          display_name: string | null;
+          avatar_url: string | null;
+          x_username: string | null;
+          discord_username: string | null;
+          bio: string | null;
+          created_at?: string;
+        }>
+      | null;
+  };
+
+  const rows = new Map<string, UserProfile>();
+  for (const row of (data ?? []) as unknown as EventLeaderboardRow[]) {
+    const user = readJoinedObject(row.users);
+    if (!user) continue;
+    const existing = rows.get(user.id);
+    rows.set(user.id, {
+      ...user,
+      total_xp: (existing?.total_xp ?? 0) + (row.xp_awarded ?? 0),
+      completed_quests: (existing?.completed_quests ?? 0) + 1
+    });
+  }
+
+  return Array.from(rows.values()).sort((a, b) => b.total_xp - a.total_xp).slice(0, limit);
 }
 
 export async function reviewProject(projectId: string, status: "active" | "archived", actorWalletAddress?: string | null) {
