@@ -61,13 +61,28 @@ create index if not exists projects_featured_sort_idx on public.projects (is_fea
 
 create table if not exists public.campaigns (
   id uuid primary key default gen_random_uuid(),
-  name text not null unique,
+  project_id uuid references public.projects(id) on delete cascade,
+  slug text,
+  name text not null,
   description text,
+  purpose text,
   starts_at timestamptz,
   ends_at timestamptz,
   status text not null default 'active' check (status in ('active', 'draft', 'archived')),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint campaigns_project_slug_unique unique (project_id, slug)
 );
+
+alter table public.campaigns add column if not exists project_id uuid references public.projects(id) on delete cascade;
+alter table public.campaigns add column if not exists slug text;
+alter table public.campaigns add column if not exists purpose text;
+alter table public.campaigns drop constraint if exists campaigns_name_key;
+update public.campaigns
+set slug = lower(regexp_replace(regexp_replace(name, '[^a-zA-Z0-9]+', '-', 'g'), '(^-|-$)', '', 'g'))
+where slug is null or slug = '';
+alter table public.campaigns drop constraint if exists campaigns_project_slug_unique;
+alter table public.campaigns add constraint campaigns_project_slug_unique unique (project_id, slug);
+create index if not exists campaigns_project_status_idx on public.campaigns (project_id, status, created_at);
 
 create table if not exists public.users (
   id uuid primary key default gen_random_uuid(),
@@ -264,6 +279,10 @@ drop policy if exists "Campaigns can be created for MVP" on public.campaigns;
 create policy "Campaigns can be created for MVP" on public.campaigns
   for insert with check (true);
 
+drop policy if exists "Campaigns can be updated for MVP" on public.campaigns;
+create policy "Campaigns can be updated for MVP" on public.campaigns
+  for update using (true) with check (true);
+
 drop policy if exists "Users are readable" on public.users;
 create policy "Users are readable" on public.users
   for select using (true);
@@ -313,14 +332,14 @@ drop policy if exists "User badges can be awarded for MVP" on public.user_badges
 create policy "User badges can be awarded for MVP" on public.user_badges
   for insert with check (true);
 
-insert into public.campaigns (name, description, status)
-values ('Questora Season One', 'Starter campaign for Base community quests.', 'active')
-on conflict do nothing;
-
 insert into public.projects (name, slug, description, project_type, status, is_verified, is_featured, featured_rank)
 values
   ('Questora', 'questora', 'Starter Base community quest hub.', 'Social', 'active', true, true, 1),
   ('Builder Guild', 'builder-guild', 'A project for builders learning and shipping on Base.', 'Education', 'active', false, true, 2)
+on conflict do nothing;
+
+insert into public.campaigns (project_id, slug, name, description, purpose, status)
+values ((select id from public.projects where slug = 'questora'), 'questora-season-one', 'Questora Season One', 'Starter campaign for Base community quests.', 'Community rewards', 'active')
 on conflict do nothing;
 
 insert into public.project_members (project_id, wallet_address, role)

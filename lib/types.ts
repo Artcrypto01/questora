@@ -115,6 +115,7 @@ export type ProjectCurationInput = Pick<Project, "is_verified" | "is_featured" |
 export type QuestInput = Pick<
   Quest,
   | "project_id"
+  | "campaign_id"
   | "title"
   | "description"
   | "task_url"
@@ -175,10 +176,16 @@ export type UserBadge = {
 
 export type Campaign = {
   id: string;
+  project_id: string | null;
+  slug: string;
   name: string;
   description: string | null;
+  purpose: string | null;
   starts_at: string | null;
   ends_at: string | null;
   status: QuestStatus;
+  project_name?: string;
   created_at?: string;
 };
+
+export type CampaignInput = Pick<Campaign, "project_id" | "slug" | "name" | "description" | "purpose" | "starts_at" | "ends_at" | "status">;

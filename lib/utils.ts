@@ -6,6 +6,29 @@ export function normalizeWallet(address: string) {
   return address.toLowerCase();
 }
 
+export function normalizeXUsername(value?: string | null) {
+  if (!value) return "";
+
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  try {
+    const parsedUrl = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
+    const hostname = parsedUrl.hostname.toLowerCase();
+    if (hostname === "x.com" || hostname === "www.x.com" || hostname === "twitter.com" || hostname === "www.twitter.com") {
+      return (parsedUrl.pathname.split("/").filter(Boolean)[0] ?? "").replace(/^@/, "").toLowerCase();
+    }
+  } catch {
+    // Fall through to plain username cleanup.
+  }
+
+  return trimmed
+    .replace(/^@/, "")
+    .replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//i, "")
+    .split(/[/?#]/)[0]
+    .toLowerCase();
+}
+
 export function getImageUrl(url?: string | null) {
   if (!url) return "";
 

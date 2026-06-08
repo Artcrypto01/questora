@@ -1,7 +1,7 @@
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import { seedCompletions, seedProjects, seedQuests, seedUsers } from "@/lib/seed-data";
-import type { AdminContext, LeaderboardRank, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
-import { getImageUrl, isQuestEnded, normalizeWallet } from "@/lib/utils";
+import type { AdminContext, Campaign, CampaignInput, LeaderboardRank, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
+import { getImageUrl, isQuestEnded, normalizeWallet, normalizeXUsername } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp } from "@/lib/xp-policy";
 
 let localProjects = [...seedProjects];
@@ -9,6 +9,7 @@ let localQuests = [...seedQuests];
 let localUsers = [...seedUsers];
 let localCompletions = [...seedCompletions];
 let localProjectMembers: ProjectMember[] = [];
+let localCampaigns: Campaign[] = [];
 
 function assertSupabase() {
   if (!supabase) {
@@ -125,17 +126,23 @@ function formatDatabaseError(error: unknown, fallback = "Something went wrong.")
 
   if (
     message.includes("quest_type") ||
+    message.includes("campaign_id") ||
+    message.includes("project_id") ||
+    message.includes("slug") ||
     message.includes("difficulty") ||
     message.includes("global_xp_reward") ||
     message.includes("global_xp_awarded") ||
     message.includes("ends_at") ||
     details.includes("quest_type") ||
+    details.includes("campaign_id") ||
+    details.includes("project_id") ||
+    details.includes("slug") ||
     details.includes("difficulty") ||
     details.includes("global_xp_reward") ||
     details.includes("global_xp_awarded") ||
     details.includes("ends_at")
   ) {
-    return "Supabase is missing newer quest columns. Run supabase/xp-guardrails.sql and supabase/quest-deadlines.sql in the Supabase SQL editor, then try again.";
+    return "Supabase is missing newer columns. Run the latest SQL migrations in the Supabase SQL editor, then try again.";
   }
 
   if (message.toLowerCase().includes("row-level security") || message.toLowerCase().includes("violates row-level security")) {
@@ -223,7 +230,7 @@ export async function getQuests(): Promise<Quest[]> {
   if (!hasSupabaseConfig) {
     return localQuests.filter((quest) => {
       const project = localProjects.find((item) => item.id === quest.project_id);
-      return quest.status !== "archived" && project?.status === "active";
+      return quest.status === "active" && !isQuestEnded(quest.ends_at) && project?.status === "active";
     }).map((quest) => {
       const project = localProjects.find((item) => item.id === quest.project_id);
       return {
@@ -242,12 +249,12 @@ export async function getQuests(): Promise<Quest[]> {
   const { data, error } = await assertSupabase()
     .from("quests")
     .select("*, projects(name, status, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until)")
-    .neq("status", "archived")
+    .eq("status", "active")
     .eq("projects.status", "active")
     .order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? [])
-    .filter((quest) => quest.projects?.status === "active")
+    .filter((quest) => quest.projects?.status === "active" && !isQuestEnded(quest.ends_at))
     .map((quest) => ({
       ...quest,
       project_name: quest.projects?.name,
@@ -261,8 +268,48 @@ export async function getQuests(): Promise<Quest[]> {
 }
 
 export async function getQuestsByProject(projectId: string): Promise<Quest[]> {
-  const quests = await getQuests();
-  return quests.filter((quest) => quest.project_id === projectId);
+  if (!hasSupabaseConfig) {
+    return localQuests
+      .filter((quest) => {
+        const project = localProjects.find((item) => item.id === quest.project_id);
+        return quest.project_id === projectId && quest.status !== "archived" && project?.status === "active";
+      })
+      .map((quest) => {
+        const project = localProjects.find((item) => item.id === quest.project_id);
+        return {
+          ...quest,
+          project_name: project?.name ?? quest.project_name,
+          project_logo_url: project?.logo_url,
+          project_type: project?.project_type,
+          project_is_verified: project?.is_verified,
+          project_is_featured: project?.is_featured,
+          project_featured_rank: project?.featured_rank,
+          project_featured_until: project?.featured_until
+        };
+      });
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("quests")
+    .select("*, projects(name, status, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until)")
+    .eq("project_id", projectId)
+    .neq("status", "archived")
+    .eq("projects.status", "active")
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? [])
+    .filter((quest) => quest.projects?.status === "active")
+    .map((quest) => ({
+      ...quest,
+      project_name: quest.projects?.name,
+      project_logo_url: quest.projects?.logo_url,
+      project_type: quest.projects?.project_type,
+      project_is_verified: quest.projects?.is_verified,
+      project_is_featured: quest.projects?.is_featured,
+      project_featured_rank: quest.projects?.featured_rank,
+      project_featured_until: quest.projects?.featured_until
+    }));
 }
 
 export async function getProjects(): Promise<Project[]> {
@@ -535,6 +582,83 @@ export async function updateProjectCuration(projectId: string, input: ProjectCur
   return data;
 }
 
+export async function getManageableCampaigns(actorWalletAddress?: string | null): Promise<Campaign[]> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context) return [];
+
+  if (!hasSupabaseConfig) {
+    return localCampaigns
+      .filter((campaign) => context.is_platform_admin || context.project_ids.includes(campaign.project_id ?? ""))
+      .map((campaign) => ({
+        ...campaign,
+        project_name: localProjects.find((project) => project.id === campaign.project_id)?.name
+      }))
+      .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
+  }
+
+  const manageableProjects = await getAllProjectsForAdmin(actorWalletAddress);
+  const projectNames = new Map(manageableProjects.map((project) => [project.id, project.name]));
+
+  const { data, error } = await assertSupabase()
+    .from("campaigns")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(formatDatabaseError(error, "Failed to load campaigns."));
+  return ((data ?? []) as Campaign[])
+    .filter((campaign) => context.is_platform_admin || context.project_ids.includes(campaign.project_id ?? ""))
+    .map((campaign) => ({
+      ...campaign,
+      project_name: projectNames.get(campaign.project_id ?? "")
+    }));
+}
+
+export async function createCampaign(input: CampaignInput, actorWalletAddress?: string | null): Promise<Campaign> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context || !hasProjectAccess(context, input.project_id)) {
+    throw new Error("You do not have permission to create campaigns for this project.");
+  }
+
+  const campaignInput = {
+    ...input,
+    slug: slugify(input.slug || input.name),
+    description: input.description?.trim() || null,
+    purpose: input.purpose?.trim() || null,
+    starts_at: input.starts_at || null,
+    ends_at: input.ends_at || null
+  };
+
+  if (!hasSupabaseConfig) {
+    const project = localProjects.find((item) => item.id === campaignInput.project_id);
+    if (project?.status !== "active") {
+      throw new Error("Project must be approved before campaigns can be created.");
+    }
+
+    const campaign = {
+      id: crypto.randomUUID(),
+      ...campaignInput,
+      project_name: project?.name,
+      created_at: new Date().toISOString()
+    };
+    localCampaigns = [campaign, ...localCampaigns];
+    return campaign;
+  }
+
+  const client = assertSupabase();
+  const { data: project, error: projectError } = await client.from("projects").select("id, status").eq("id", campaignInput.project_id).single();
+  if (projectError) throw new Error(formatDatabaseError(projectError, "Failed to load selected project."));
+  if (project.status !== "active") {
+    throw new Error("Project must be approved before campaigns can be created.");
+  }
+
+  const { data, error } = await client.from("campaigns").insert(campaignInput).select("*").single();
+  if (error) throw new Error(formatDatabaseError(error, "Failed to create campaign."));
+  return {
+    ...data,
+    project_name: (await getAllProjectsForAdmin(actorWalletAddress)).find((item) => item.id === data.project_id)?.name
+  };
+}
+
 export async function reviewProject(projectId: string, status: "active" | "archived", actorWalletAddress?: string | null) {
   const context = await getAdminContext(actorWalletAddress);
   if (!context?.is_platform_admin) {
@@ -569,6 +693,10 @@ export async function createQuest(input: QuestInput, actorWalletAddress?: string
     if (project?.status !== "active") {
       throw new Error("Project must be approved before quests can be created.");
     }
+    const campaign = questInput.campaign_id ? localCampaigns.find((item) => item.id === questInput.campaign_id) : null;
+    if (questInput.campaign_id && campaign?.project_id !== questInput.project_id) {
+      throw new Error("Selected campaign does not belong to this project.");
+    }
 
     const quest = {
       id: crypto.randomUUID(),
@@ -584,6 +712,18 @@ export async function createQuest(input: QuestInput, actorWalletAddress?: string
   if (projectError) throw new Error(formatDatabaseError(projectError, "Failed to load selected project."));
   if (project.status !== "active") {
     throw new Error("Project must be approved before quests can be created.");
+  }
+  if (questInput.campaign_id) {
+    const { data: campaign, error: campaignError } = await client
+      .from("campaigns")
+      .select("id, project_id")
+      .eq("id", questInput.campaign_id)
+      .single();
+
+    if (campaignError) throw new Error(formatDatabaseError(campaignError, "Failed to load selected campaign."));
+    if (campaign.project_id !== questInput.project_id) {
+      throw new Error("Selected campaign does not belong to this project.");
+    }
   }
 
   const { data, error } = await client.from("quests").insert(questInput).select("*, projects(name, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until)").single();
@@ -702,7 +842,7 @@ export async function updateUserProfile(walletAddress: string, input: UserProfil
   const profileInput = {
     display_name: input.display_name?.trim() || null,
     avatar_url: input.avatar_url?.trim() || null,
-    x_username: input.x_username?.trim().replace(/^@/, "") || null,
+    x_username: normalizeXUsername(input.x_username) || null,
     discord_username: input.discord_username?.trim() || null,
     bio: input.bio?.trim() || null
   };
@@ -728,6 +868,46 @@ export async function updateUserProfile(walletAddress: string, input: UserProfil
   const { data, error } = await assertSupabase().from("users").update(profileInput).eq("wallet_address", wallet).select("*").single();
   if (error) throw error;
   return hydrateUserXp(data);
+}
+
+export async function getUserProfileByIdentifier(identifier: string): Promise<UserProfile | null> {
+  const decodedIdentifier = decodeURIComponent(identifier).trim();
+  if (!decodedIdentifier) return null;
+
+  const normalizedIdentifier = decodedIdentifier.toLowerCase().replace(/^@/, "");
+  const normalizedXIdentifier = normalizeXUsername(decodedIdentifier);
+  const isWallet = normalizedIdentifier.startsWith("0x");
+
+  if (!hasSupabaseConfig) {
+    const user =
+      localUsers.find((item) => item.wallet_address === normalizedIdentifier) ??
+      localUsers.find((item) => normalizeXUsername(item.x_username) === normalizedXIdentifier) ??
+      null;
+    return user ? hydrateUserXp(user) : null;
+  }
+
+  const client = assertSupabase();
+  if (isWallet) {
+    const { data, error } = await client.from("users").select("*").eq("wallet_address", normalizedIdentifier).maybeSingle();
+    if (error) throw error;
+    return data ? hydrateUserXp(data) : null;
+  }
+
+  const usernameCandidates = [
+    normalizedXIdentifier,
+    `https://x.com/${normalizedXIdentifier}`,
+    `https://twitter.com/${normalizedXIdentifier}`,
+    `https://www.x.com/${normalizedXIdentifier}`,
+    `https://www.twitter.com/${normalizedXIdentifier}`
+  ].filter(Boolean);
+
+  for (const candidate of usernameCandidates) {
+    const { data, error } = await client.from("users").select("*").ilike("x_username", candidate).maybeSingle();
+    if (error) throw error;
+    if (data) return hydrateUserXp(data);
+  }
+
+  return null;
 }
 
 export async function getUserCompletions(userId: string): Promise<UserQuest[]> {

@@ -3,8 +3,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
 import { Archive, ArrowLeft, ArrowRight, CheckCircle2, Download, FolderPlus, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
-import { createProject, createQuest, getAdminContext, getManageableProjects, getManageableQuests, getQualifiedUsers, getQuestSubmissions, reviewProject, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
-import type { AdminContext, Project, ProjectInput, ProjectType, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
+import { createCampaign, createProject, createQuest, getAdminContext, getManageableCampaigns, getManageableProjects, getManageableQuests, getQualifiedUsers, getQuestSubmissions, reviewProject, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
+import type { AdminContext, Campaign, CampaignInput, Project, ProjectInput, ProjectType, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, fromDatetimeLocalValue, isQuestEnded, toDatetimeLocalValue } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp, difficultyLabels, getQuestXpPolicy, questTypeLabels } from "@/lib/xp-policy";
 
@@ -16,14 +16,23 @@ const questWizardSteps = ["Project", "Purpose", "Task", "Reward", "Preview"];
 const studioTabs = [
   { id: "overview", label: "Overview" },
   { id: "projects", label: "Projects" },
+  { id: "campaigns", label: "Campaigns" },
   { id: "quests", label: "Quests" },
   { id: "submissions", label: "Submissions" },
   { id: "exports", label: "Exports" }
 ] as const;
 
 type StudioTab = (typeof studioTabs)[number]["id"];
+type QuestListFilter = "active" | "ended" | "archived" | "all";
 
-const questTemplates: Array<{ name: string; summary: string; values: Omit<QuestInput, "project_id" | "status"> }> = [
+const questListFilters: Array<{ id: QuestListFilter; label: string }> = [
+  { id: "active", label: "Active" },
+  { id: "ended", label: "Ended" },
+  { id: "archived", label: "Archived" },
+  { id: "all", label: "All" }
+];
+
+const questTemplates: Array<{ name: string; summary: string; values: Omit<QuestInput, "project_id" | "campaign_id" | "status"> }> = [
   {
     name: "Follow X",
     summary: "Ask members to follow your X account.",
@@ -161,6 +170,7 @@ const questTemplates: Array<{ name: string; summary: string; values: Omit<QuestI
 
 const initialForm: QuestInput = {
   project_id: "",
+  campaign_id: null,
   title: "",
   description: "",
   task_url: "",
@@ -175,6 +185,17 @@ const initialForm: QuestInput = {
   status: "active",
   category: "Community",
   ends_at: null
+};
+
+const initialCampaignForm: CampaignInput = {
+  project_id: "",
+  slug: "",
+  name: "",
+  description: "",
+  purpose: campaignPurposes[0],
+  starts_at: null,
+  ends_at: null,
+  status: "active"
 };
 
 const initialProjectForm: ProjectInput = {
@@ -196,6 +217,7 @@ export default function AdminPage() {
   const { address, isConnected } = useAccount();
   const [adminContext, setAdminContext] = useState<AdminContext | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [managedQuests, setManagedQuests] = useState<Quest[]>([]);
   const [submissions, setSubmissions] = useState<UserQuest[]>([]);
   const [qualifiedUsers, setQualifiedUsers] = useState<QualifiedUser[]>([]);
@@ -203,6 +225,7 @@ export default function AdminPage() {
   const [minimumQualifiedXp, setMinimumQualifiedXp] = useState(100);
   const [minimumQualifiedQuests, setMinimumQualifiedQuests] = useState(1);
   const [projectForm, setProjectForm] = useState(initialProjectForm);
+  const [campaignForm, setCampaignForm] = useState(initialCampaignForm);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editProjectForm, setEditProjectForm] = useState(initialProjectForm);
   const [curationForms, setCurationForms] = useState<Record<string, { featured_rank: string; featured_until: string }>>({});
@@ -211,10 +234,15 @@ export default function AdminPage() {
   const [questStep, setQuestStep] = useState(0);
   const [campaignPurpose, setCampaignPurpose] = useState(campaignPurposes[0]);
   const [activeStudioTab, setActiveStudioTab] = useState<StudioTab>("overview");
+  const [questListFilter, setQuestListFilter] = useState<QuestListFilter>("active");
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const selectedProject = projects.find((project) => project.id === form.project_id);
+  const selectedCampaign = campaigns.find((campaign) => campaign.id === form.campaign_id);
+  const selectedCampaignProject = projects.find((project) => project.id === campaignForm.project_id);
+  const projectCampaigns = campaigns.filter((campaign) => campaign.project_id === form.project_id && campaign.status !== "archived");
   const canCreateQuest = Boolean(selectedProject && selectedProject.status === "active");
+  const canCreateCampaign = Boolean(selectedCampaignProject && selectedCampaignProject.status === "active");
   const xpPolicy = getQuestXpPolicy(form.quest_type, form.difficulty);
   const globalXpReward = calculateGlobalXp(form.xp_reward, form.quest_type, form.difficulty);
   const pendingSubmissionsCount = submissions.filter((submission) => submission.status === "submitted").length;
@@ -229,6 +257,17 @@ export default function AdminPage() {
           user.approved_quests >= minimumQualifiedQuests
       ),
     [minimumQualifiedQuests, minimumQualifiedXp, qualifiedProjectId, qualifiedUsers]
+  );
+  const visibleManagedQuests = useMemo(
+    () =>
+      managedQuests.filter((quest) => {
+        const ended = isQuestEnded(quest.ends_at);
+        if (questListFilter === "active") return quest.status === "active" && !ended;
+        if (questListFilter === "ended") return quest.status !== "archived" && ended;
+        if (questListFilter === "archived") return quest.status === "archived";
+        return true;
+      }),
+    [managedQuests, questListFilter]
   );
   const canAdvanceQuestStep =
     questStep === 0
@@ -262,6 +301,7 @@ export default function AdminPage() {
     if (!address) {
       setAdminContext(null);
       setProjects([]);
+      setCampaigns([]);
       setManagedQuests([]);
       setSubmissions([]);
       setQualifiedUsers([]);
@@ -275,7 +315,17 @@ export default function AdminPage() {
         ...current,
         project_id: current.project_id || projectRows[0]?.id || ""
       }));
+      setCampaignForm((current) => ({
+        ...current,
+        project_id: current.project_id || projectRows[0]?.id || ""
+      }));
     });
+    getManageableCampaigns(address)
+      .then(setCampaigns)
+      .catch((error) => {
+        setCampaigns([]);
+        setMessage(error instanceof Error ? error.message : "Failed to load campaigns.");
+      });
     getManageableQuests(address).then(setManagedQuests);
     getQuestSubmissions(address).then(setSubmissions);
     getQualifiedUsers(address).then(setQualifiedUsers);
@@ -309,6 +359,7 @@ export default function AdminPage() {
     });
     setProjects((current) => [project, ...current]);
     setForm((current) => ({ ...current, project_id: project.id }));
+    setCampaignForm((current) => ({ ...current, project_id: project.id }));
     setProjectForm(initialProjectForm);
     setMessage(project.status === "active" ? "Project created and active." : "Project submitted. Platform admin must approve it before it appears publicly.");
   }
@@ -335,12 +386,42 @@ export default function AdminPage() {
       await updateProject(editingProjectId, editProjectForm, address);
       const projectRows = await getManageableProjects(address);
       setProjects(projectRows);
+      setCampaigns(await getManageableCampaigns(address));
       setManagedQuests(await getManageableQuests(address));
       setEditingProjectId(null);
       setEditProjectForm(initialProjectForm);
       setMessage("Project profile updated.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to update project.");
+    }
+  }
+
+  async function handleCampaignSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!address) {
+      setMessage("Connect a project owner wallet before creating campaigns.");
+      return;
+    }
+
+    if (!canCreateCampaign) {
+      setMessage("Project is waiting for platform approval. You can create campaigns after it is approved.");
+      return;
+    }
+
+    if (campaignForm.ends_at && isQuestEnded(campaignForm.ends_at)) {
+      setMessage("Campaign end date must be in the future.");
+      return;
+    }
+
+    try {
+      const campaign = await createCampaign(campaignForm, address);
+      setCampaigns((current) => [campaign, ...current]);
+      setForm((current) => ({ ...current, project_id: campaign.project_id ?? current.project_id, campaign_id: campaign.id }));
+      setCampaignPurpose(campaign.purpose || campaignPurposes[0]);
+      setCampaignForm({ ...initialCampaignForm, project_id: campaign.project_id ?? "" });
+      setMessage("Campaign created. You can now assign quests to it.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to create campaign.");
     }
   }
 
@@ -368,6 +449,7 @@ export default function AdminPage() {
 
     try {
       const selectedProjectId = form.project_id;
+      const selectedCampaignId = form.campaign_id ?? null;
       const xpReward = clampProjectXp(form.xp_reward, form.quest_type, form.difficulty);
       await createQuest(
         {
@@ -378,7 +460,7 @@ export default function AdminPage() {
         address
       );
       setManagedQuests(await getManageableQuests(address));
-      setForm({ ...initialForm, project_id: selectedProjectId });
+      setForm({ ...initialForm, project_id: selectedProjectId, campaign_id: selectedCampaignId });
       setSelectedTemplate("");
       setCampaignPurpose(campaignPurposes[0]);
       setQuestStep(0);
@@ -440,6 +522,7 @@ export default function AdminPage() {
     setSelectedTemplate("");
     setForm({
       project_id: quest.project_id ?? "",
+      campaign_id: quest.campaign_id ?? null,
       title: "",
       description: quest.description,
       task_url: quest.task_url ?? "",
@@ -612,11 +695,16 @@ export default function AdminPage() {
         </div>
       </section>
 
-          <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+          <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
             <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
               <p className="text-xs font-black uppercase tracking-wider text-blue-200">Projects</p>
               <p className="mt-2 text-3xl font-black text-white">{projects.length}</p>
               <p className="mt-1 text-xs font-semibold text-blue-200">{pendingProjectsCount} waiting review</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
+              <p className="text-xs font-black uppercase tracking-wider text-blue-200">Campaigns</p>
+              <p className="mt-2 text-3xl font-black text-white">{campaigns.length}</p>
+              <p className="mt-1 text-xs font-semibold text-blue-200">Across owned projects</p>
             </div>
             <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
               <p className="text-xs font-black uppercase tracking-wider text-blue-200">Active quests</p>
@@ -1146,7 +1234,7 @@ export default function AdminPage() {
                   <select
                     required
                     value={form.project_id ?? ""}
-                    onChange={(event) => setForm({ ...form, project_id: event.target.value })}
+                    onChange={(event) => setForm({ ...form, project_id: event.target.value, campaign_id: null })}
                     className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
                   >
                     <option value="">Select project</option>
@@ -1156,6 +1244,22 @@ export default function AdminPage() {
                       </option>
                     ))}
                   </select>
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Campaign</span>
+                  <select
+                    value={form.campaign_id ?? ""}
+                    onChange={(event) => setForm({ ...form, campaign_id: event.target.value || null })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    <option value="">No campaign</option>
+                    {projectCampaigns.map((campaign) => (
+                      <option key={campaign.id} value={campaign.id}>
+                        {campaign.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-xs text-blue-200">Optional, but recommended for whitelist, beta, and reward programs.</span>
                 </label>
                 {selectedProject ? (
                   <div className="rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4">
@@ -1399,6 +1503,7 @@ export default function AdminPage() {
                   <p className="text-xs font-black uppercase tracking-wider text-cyan-200">Quest preview</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-wider text-base-blue">{selectedProject?.name ?? "Project"}</span>
+                    {selectedCampaign ? <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-950">{selectedCampaign.name}</span> : null}
                     <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{campaignPurpose}</span>
                     <span className="rounded-full bg-cyan-950 px-3 py-1 text-xs font-bold uppercase tracking-wider text-cyan-100">{form.proof_type}</span>
                     <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{questTypeLabels[form.quest_type]}</span>
@@ -1456,24 +1561,47 @@ export default function AdminPage() {
       </form>
 
       <section className="mt-6 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
-        <div className="flex items-center gap-3">
-          <Archive className="text-cyan-200" />
-          <h2 className="text-xl font-black text-white">Manage quests</h2>
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+          <div className="flex items-center gap-3">
+            <Archive className="text-cyan-200" />
+            <div>
+              <h2 className="text-xl font-black text-white">Manage quests</h2>
+              <p className="mt-1 text-sm font-semibold text-blue-100">Archived and ended quests are hidden from the active view.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {questListFilters.map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                onClick={() => setQuestListFilter(filter.id)}
+                className={`focus-ring rounded-lg px-3 py-2 text-xs font-black uppercase tracking-wider transition ${
+                  questListFilter === filter.id ? "bg-cyan-200 text-slate-950" : "bg-white/10 text-blue-100 hover:bg-white/15 hover:text-white"
+                }`}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="mt-5 grid gap-3">
           {!isConnected ? (
             <p className="text-blue-100">Connect a project owner wallet to manage quests.</p>
           ) : managedQuests.length === 0 ? (
             <p className="text-blue-100">No quests available for this wallet yet.</p>
+          ) : visibleManagedQuests.length === 0 ? (
+            <p className="text-blue-100">No {questListFilter} quests in this view.</p>
           ) : (
-            managedQuests.map((quest) => {
+            visibleManagedQuests.map((quest) => {
               const ended = isQuestEnded(quest.ends_at);
+              const questCampaign = campaigns.find((campaign) => campaign.id === quest.campaign_id);
               return (
               <article key={quest.id} className="rounded-lg border border-white/10 bg-white/10 p-4">
                 <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
                   <div className="min-w-0">
                     <div className="flex flex-wrap gap-2">
                       {quest.project_name ? <span className="rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-wider text-base-blue">{quest.project_name}</span> : null}
+                      {questCampaign ? <span className="rounded-full bg-cyan-950 px-3 py-1 text-xs font-bold uppercase tracking-wider text-cyan-100">{questCampaign.name}</span> : null}
                       <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-950">{ended ? "ended" : quest.status}</span>
                       <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{quest.category}</span>
                       <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{questTypeLabels[quest.quest_type]}</span>
@@ -1573,6 +1701,164 @@ export default function AdminPage() {
             )}
           </div>
         </section>
+      ) : null}
+
+      {activeStudioTab === "campaigns" ? (
+        <>
+          <form onSubmit={handleCampaignSubmit} className="mt-8 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
+            <div className="flex items-center gap-3">
+              <FolderPlus className="text-cyan-200" />
+              <div>
+                <h2 className="text-xl font-black text-white">Create campaign</h2>
+                <p className="mt-1 text-sm font-semibold text-blue-100">Group quests into a whitelist, beta, reward, or contributor program.</p>
+              </div>
+            </div>
+            <div className="mt-5 grid gap-5">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Project</span>
+                  <select
+                    required
+                    value={campaignForm.project_id ?? ""}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, project_id: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    <option value="">Select project</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name} - {project.status === "active" ? "active" : "waiting approval"}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedCampaignProject && selectedCampaignProject.status !== "active" ? (
+                    <span className="text-xs font-semibold text-cyan-200">Campaign creation unlocks after this project is approved.</span>
+                  ) : null}
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Purpose</span>
+                  <select
+                    value={campaignForm.purpose ?? campaignPurposes[0]}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, purpose: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    {campaignPurposes.map((purpose) => (
+                      <option key={purpose}>{purpose}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Campaign name</span>
+                  <input
+                    required
+                    value={campaignForm.name}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, name: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="Whitelist Season 1"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Slug</span>
+                  <input
+                    value={campaignForm.slug}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, slug: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="whitelist-season-1"
+                  />
+                </label>
+              </div>
+              <label className="grid gap-2">
+                <span className="text-sm font-bold text-blue-100">Description</span>
+                <textarea
+                  value={campaignForm.description ?? ""}
+                  onChange={(event) => setCampaignForm({ ...campaignForm, description: event.target.value })}
+                  className="focus-ring min-h-28 rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                  placeholder="Explain who this campaign is for and what contributors can earn or qualify for."
+                />
+              </label>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Status</span>
+                  <select
+                    value={campaignForm.status}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, status: event.target.value as QuestStatus })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    <option value="active">Active</option>
+                    <option value="draft">Draft</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Starts</span>
+                  <input
+                    type="datetime-local"
+                    value={toDatetimeLocalValue(campaignForm.starts_at)}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, starts_at: fromDatetimeLocalValue(event.target.value) })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Ends</span>
+                  <input
+                    type="datetime-local"
+                    value={toDatetimeLocalValue(campaignForm.ends_at)}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, ends_at: fromDatetimeLocalValue(event.target.value) })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  />
+                </label>
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={!canCreateCampaign}
+              className="focus-ring mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-base-blue px-5 py-3 font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+            >
+              <FolderPlus size={20} />
+              Create campaign
+            </button>
+            {message ? <p className="mt-4 text-sm font-semibold text-cyan-200">{message}</p> : null}
+          </form>
+
+          <section className="mt-6 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
+            <div className="flex items-center gap-3">
+              <Archive className="text-cyan-200" />
+              <h2 className="text-xl font-black text-white">Manage campaigns</h2>
+            </div>
+            <div className="mt-5 grid gap-3">
+              {!isConnected ? (
+                <p className="text-blue-100">Connect a project owner wallet to manage campaigns.</p>
+              ) : campaigns.length === 0 ? (
+                <p className="text-blue-100">No campaigns yet. Create one to group related quests.</p>
+              ) : (
+                campaigns.map((campaign) => (
+                  <article key={campaign.id} className="rounded-lg border border-white/10 bg-white/10 p-4">
+                    <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+                      <div>
+                        <div className="flex flex-wrap gap-2">
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-wider text-base-blue">{campaign.project_name ?? "Project"}</span>
+                          <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-950">{campaign.status}</span>
+                          {campaign.purpose ? <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{campaign.purpose}</span> : null}
+                        </div>
+                        <h3 className="mt-3 font-black text-white">{campaign.name}</h3>
+                        <p className="mt-1 text-sm leading-6 text-blue-100">{campaign.description || "No campaign description yet."}</p>
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-blue-200">
+                          <span>/{campaign.slug}</span>
+                          {campaign.starts_at ? <span>Starts {formatQuestDeadline(campaign.starts_at)}</span> : null}
+                          {campaign.ends_at ? <span>Ends {formatQuestDeadline(campaign.ends_at)}</span> : null}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-white/10 px-4 py-3 text-sm font-black text-cyan-200">
+                        {managedQuests.filter((quest) => quest.campaign_id === campaign.id).length} quests
+                      </div>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        </>
       ) : null}
 
       {activeStudioTab === "submissions" ? (

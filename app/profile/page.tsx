@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { useAccount } from "wagmi";
-import { Award, BadgeCheck, Clock3, Medal, Save, UserRound, Wallet } from "lucide-react";
+import { Award, BadgeCheck, Clock3, ExternalLink, Medal, Save, UserRound, Wallet } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import { getOrCreateUser, getUserCompletions, updateUserProfile } from "@/lib/quest-service";
 import type { UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
+import { normalizeXUsername } from "@/lib/utils";
 
 const mockBadges = ["Base Starter", "Quest Sprinter", "Community Signal"];
 
@@ -62,6 +64,8 @@ export default function ProfilePage() {
   }
 
   const displayName = user?.display_name || (address ? "Questora member" : "Connect to create your profile");
+  const xUsername = normalizeXUsername(user?.x_username);
+  const publicProfilePath = user ? `/u/${encodeURIComponent(xUsername || user.wallet_address)}` : "";
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -81,6 +85,12 @@ export default function ProfilePage() {
         <p className="mt-4 max-w-2xl leading-7 text-blue-100">
           {user?.bio || "Add a name, avatar, and socials so project owners can recognize you."}
         </p>
+        {user ? (
+          <Link href={publicProfilePath} className="focus-ring mt-5 inline-flex items-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-black text-base-blue">
+            View public profile
+            <ExternalLink size={16} />
+          </Link>
+        ) : null}
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
