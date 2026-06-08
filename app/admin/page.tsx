@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
-import { Archive, CheckCircle2, Download, FolderPlus, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, CheckCircle2, Download, FolderPlus, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
 import { createProject, createQuest, getAdminContext, getManageableProjects, getManageableQuests, getQualifiedUsers, getQuestSubmissions, reviewProject, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
 import type { AdminContext, Project, ProjectInput, ProjectType, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, fromDatetimeLocalValue, isQuestEnded, toDatetimeLocalValue } from "@/lib/utils";
@@ -12,6 +12,16 @@ const projectTypes: ProjectType[] = ["NFT", "Meme", "AI", "DeFi", "Gaming", "DAO
 const questTypes = Object.keys(questTypeLabels) as QuestType[];
 const questDifficulties = Object.keys(difficultyLabels) as QuestDifficulty[];
 const campaignPurposes = ["NFT whitelist", "Early access", "Community rewards", "Beta tester selection", "Contributor tracking", "Leaderboard rewards"];
+const questWizardSteps = ["Project", "Purpose", "Task", "Reward", "Preview"];
+const studioTabs = [
+  { id: "overview", label: "Overview" },
+  { id: "projects", label: "Projects" },
+  { id: "quests", label: "Quests" },
+  { id: "submissions", label: "Submissions" },
+  { id: "exports", label: "Exports" }
+] as const;
+
+type StudioTab = (typeof studioTabs)[number]["id"];
 
 const questTemplates: Array<{ name: string; summary: string; values: Omit<QuestInput, "project_id" | "status"> }> = [
   {
@@ -198,12 +208,18 @@ export default function AdminPage() {
   const [curationForms, setCurationForms] = useState<Record<string, { featured_rank: string; featured_until: string }>>({});
   const [form, setForm] = useState(initialForm);
   const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [questStep, setQuestStep] = useState(0);
+  const [campaignPurpose, setCampaignPurpose] = useState(campaignPurposes[0]);
+  const [activeStudioTab, setActiveStudioTab] = useState<StudioTab>("overview");
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const selectedProject = projects.find((project) => project.id === form.project_id);
   const canCreateQuest = Boolean(selectedProject && selectedProject.status === "active");
   const xpPolicy = getQuestXpPolicy(form.quest_type, form.difficulty);
   const globalXpReward = calculateGlobalXp(form.xp_reward, form.quest_type, form.difficulty);
+  const pendingSubmissionsCount = submissions.filter((submission) => submission.status === "submitted").length;
+  const pendingProjectsCount = projects.filter((project) => project.status === "draft").length;
+  const activeQuestsCount = managedQuests.filter((quest) => quest.status === "active" && !isQuestEnded(quest.ends_at)).length;
   const filteredQualifiedUsers = useMemo(
     () =>
       qualifiedUsers.filter(
@@ -214,6 +230,16 @@ export default function AdminPage() {
       ),
     [minimumQualifiedQuests, minimumQualifiedXp, qualifiedProjectId, qualifiedUsers]
   );
+  const canAdvanceQuestStep =
+    questStep === 0
+      ? Boolean(form.project_id && canCreateQuest)
+      : questStep === 1
+        ? Boolean(selectedTemplate || campaignPurpose)
+        : questStep === 2
+          ? Boolean(form.title.trim() && form.description.trim())
+          : questStep === 3
+            ? Boolean(form.xp_reward && (!form.ends_at || !isQuestEnded(form.ends_at)))
+            : true;
 
   function projectToForm(project: Project): ProjectInput {
     return {
@@ -354,6 +380,8 @@ export default function AdminPage() {
       setManagedQuests(await getManageableQuests(address));
       setForm({ ...initialForm, project_id: selectedProjectId });
       setSelectedTemplate("");
+      setCampaignPurpose(campaignPurposes[0]);
+      setQuestStep(0);
       setMessage("Quest created. It is now available on the dashboard.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to create quest.");
@@ -427,6 +455,7 @@ export default function AdminPage() {
       category: quest.category,
       ends_at: null
     });
+    setQuestStep(2);
     setMessage("Quest template loaded. Add a new title, adjust details, then create it.");
   }
 
@@ -450,6 +479,15 @@ export default function AdminPage() {
       task_url: taskUrl,
       global_xp_reward: calculateGlobalXp(template.values.xp_reward, template.values.quest_type, template.values.difficulty)
     }));
+  }
+
+  function goToNextQuestStep() {
+    if (!canAdvanceQuestStep) return;
+    setQuestStep((current) => Math.min(current + 1, questWizardSteps.length - 1));
+  }
+
+  function goToPreviousQuestStep() {
+    setQuestStep((current) => Math.max(current - 1, 0));
   }
 
   function updateQuestType(questType: QuestType) {
@@ -536,7 +574,26 @@ export default function AdminPage() {
         ) : null}
       </div>
 
-      <section className="mt-8 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-6 shadow-glow">
+      <div className="mt-6 overflow-x-auto rounded-lg border border-white/10 bg-[#0b1730]/92 p-2 shadow-glow">
+        <div className="flex min-w-max gap-2">
+          {studioTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveStudioTab(tab.id)}
+              className={`focus-ring rounded-lg px-4 py-3 text-sm font-black transition ${
+                activeStudioTab === tab.id ? "bg-cyan-200 text-slate-950" : "bg-white/10 text-blue-100 hover:bg-white/15 hover:text-white"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeStudioTab === "overview" ? (
+        <>
+          <section className="mt-8 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-6 shadow-glow">
         <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
           <div>
             <p className="text-sm font-black uppercase tracking-wider text-cyan-200">Campaign purpose</p>
@@ -555,7 +612,33 @@ export default function AdminPage() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
+          <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
+              <p className="text-xs font-black uppercase tracking-wider text-blue-200">Projects</p>
+              <p className="mt-2 text-3xl font-black text-white">{projects.length}</p>
+              <p className="mt-1 text-xs font-semibold text-blue-200">{pendingProjectsCount} waiting review</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
+              <p className="text-xs font-black uppercase tracking-wider text-blue-200">Active quests</p>
+              <p className="mt-2 text-3xl font-black text-white">{activeQuestsCount}</p>
+              <p className="mt-1 text-xs font-semibold text-blue-200">{managedQuests.length} total manageable</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
+              <p className="text-xs font-black uppercase tracking-wider text-blue-200">Pending reviews</p>
+              <p className="mt-2 text-3xl font-black text-white">{pendingSubmissionsCount}</p>
+              <p className="mt-1 text-xs font-semibold text-blue-200">Quest submissions</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
+              <p className="text-xs font-black uppercase tracking-wider text-blue-200">Qualified users</p>
+              <p className="mt-2 text-3xl font-black text-white">{filteredQualifiedUsers.length}</p>
+              <p className="mt-1 text-xs font-semibold text-blue-200">Ready for export</p>
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {activeStudioTab === "exports" ? (
+      <section className="mt-8 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
           <div className="flex items-start gap-3">
             <UsersRound className="mt-1 text-cyan-200" />
@@ -665,7 +748,10 @@ export default function AdminPage() {
           </div>
         </div>
       </section>
+      ) : null}
 
+      {activeStudioTab === "projects" ? (
+        <>
       <form onSubmit={handleProjectSubmit} className="mt-8 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
         <div className="flex items-center gap-3">
           <FolderPlus className="text-cyan-200" />
@@ -1012,261 +1098,360 @@ export default function AdminPage() {
           )}
         </div>
       </section>
+        </>
+      ) : null}
 
-      <form onSubmit={handleSubmit} className="mt-6 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
-        <div className="flex items-center gap-3">
-          <PlusCircle className="text-cyan-200" />
-          <h2 className="text-xl font-black text-white">Create quest</h2>
+      {activeStudioTab === "quests" ? (
+        <>
+      <form onSubmit={handleSubmit} className="mt-8 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
+        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+          <div className="flex items-center gap-3">
+            <PlusCircle className="text-cyan-200" />
+            <div>
+              <h2 className="text-xl font-black text-white">Create quest</h2>
+              <p className="mt-1 text-sm font-semibold text-blue-100">Build one campaign task at a time with clear member instructions.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-5 gap-2">
+            {questWizardSteps.map((step, index) => (
+              <button
+                key={step}
+                type="button"
+                onClick={() => setQuestStep(index)}
+                className={`focus-ring h-10 min-w-10 rounded-lg border px-2 text-xs font-black transition ${
+                  questStep === index ? "border-cyan-200 bg-cyan-200 text-slate-950" : "border-white/10 bg-white/10 text-blue-100 hover:border-cyan-200/60"
+                }`}
+                aria-label={`Go to ${step} step`}
+              >
+                {index + 1}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="grid gap-5">
-          <label className="mt-5 grid gap-2">
-            <span className="text-sm font-bold text-blue-100">Project</span>
-            <select
-              required
-              value={form.project_id ?? ""}
-              onChange={(event) => setForm({ ...form, project_id: event.target.value })}
-              className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
-            >
-              <option value="">Select project</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name} - {project.status === "active" ? "active" : "waiting approval"}
-                </option>
-              ))}
-            </select>
-            {selectedProject && selectedProject.status !== "active" ? (
-              <span className="rounded-lg border border-cyan-200/30 bg-cyan-200/10 px-4 py-3 text-sm font-semibold text-cyan-100">
-                Waiting for platform approval. Quest creation is locked until this project is approved.
-              </span>
+
+        <div className="mt-5 overflow-hidden rounded-lg border border-white/10 bg-white/[0.04]">
+          <div className="h-1 bg-white/10">
+            <div className="h-full bg-cyan-200 transition-all" style={{ width: `${((questStep + 1) / questWizardSteps.length) * 100}%` }} />
+          </div>
+          <div className="grid gap-6 p-5">
+            <div>
+              <p className="text-xs font-black uppercase tracking-wider text-cyan-200">Step {questStep + 1} of {questWizardSteps.length}</p>
+              <h3 className="mt-1 text-2xl font-black text-white">{questWizardSteps[questStep]}</h3>
+            </div>
+
+            {questStep === 0 ? (
+              <div className="grid gap-4">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Project</span>
+                  <select
+                    required
+                    value={form.project_id ?? ""}
+                    onChange={(event) => setForm({ ...form, project_id: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    <option value="">Select project</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name} - {project.status === "active" ? "active" : "waiting approval"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {selectedProject ? (
+                  <div className="rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4">
+                    <p className="font-black text-white">{selectedProject.name}</p>
+                    <p className="mt-2 text-sm leading-6 text-blue-100">{selectedProject.description || "No project description yet."}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wider text-base-blue">{selectedProject.project_type}</span>
+                      <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-wider text-blue-100">{selectedProject.status}</span>
+                    </div>
+                  </div>
+                ) : null}
+                {selectedProject && selectedProject.status !== "active" ? (
+                  <span className="rounded-lg border border-cyan-200/30 bg-cyan-200/10 px-4 py-3 text-sm font-semibold text-cyan-100">
+                    Waiting for platform approval. Quest creation is locked until this project is approved.
+                  </span>
+                ) : null}
+              </div>
             ) : null}
-          </label>
-          <div className="grid gap-3">
-            <span className="text-sm font-bold text-blue-100">Choose a quest template</span>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {questTemplates.map((template) => (
+
+            {questStep === 1 ? (
+              <div className="grid gap-5">
+                <div className="grid gap-3">
+                  <span className="text-sm font-bold text-blue-100">Campaign purpose</span>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {campaignPurposes.map((purpose) => (
+                      <button
+                        key={purpose}
+                        type="button"
+                        onClick={() => setCampaignPurpose(purpose)}
+                        className={`focus-ring rounded-lg border px-4 py-3 text-left text-sm font-black transition ${
+                          campaignPurpose === purpose ? "border-cyan-200 bg-cyan-200 text-slate-950" : "border-white/10 bg-white/10 text-white hover:border-cyan-200/60"
+                        }`}
+                      >
+                        {purpose}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid gap-3">
+                  <span className="text-sm font-bold text-blue-100">Quest template</span>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {questTemplates.map((template) => (
+                      <button
+                        key={template.name}
+                        type="button"
+                        onClick={() => applyQuestTemplate(template.name)}
+                        className={`focus-ring rounded-lg border p-4 text-left transition ${
+                          selectedTemplate === template.name ? "border-cyan-200 bg-cyan-200/15" : "border-white/10 bg-white/10 hover:border-cyan-200/60"
+                        }`}
+                      >
+                        <p className="font-black text-white">{template.name}</p>
+                        <p className="mt-2 text-sm leading-5 text-blue-100">{template.summary}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {questStep === 2 ? (
+              <div className="grid gap-5">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Title</span>
+                  <input
+                    required
+                    value={form.title}
+                    onChange={(event) => setForm({ ...form, title: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="Join the Discord"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Task link</span>
+                  <input
+                    value={form.task_url ?? ""}
+                    onChange={(event) => setForm({ ...form, task_url: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="https://x.com/project, https://discord.gg/..., article URL, app URL"
+                  />
+                  <span className="text-xs text-blue-200">This becomes the direct action button on the quest card.</span>
+                </label>
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <label className="grid gap-2">
+                    <span className="text-sm font-bold text-blue-100">Description</span>
+                    <textarea
+                      required
+                      value={form.description}
+                      onChange={(event) => setForm({ ...form, description: event.target.value })}
+                      className="focus-ring min-h-36 rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                      placeholder="Tell members what to do and what proof is expected."
+                    />
+                  </label>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-bold text-blue-100">Step-by-step instructions</span>
+                    <textarea
+                      value={form.instructions ?? ""}
+                      onChange={(event) => setForm({ ...form, instructions: event.target.value })}
+                      className="focus-ring min-h-36 rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                      placeholder="Example: Open the post, repost it, then submit your repost URL."
+                    />
+                  </label>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label className="grid gap-2">
+                    <span className="text-sm font-bold text-blue-100">Proof type</span>
+                    <select
+                      value={form.proof_type}
+                      onChange={(event) => setForm({ ...form, proof_type: event.target.value as QuestInput["proof_type"] })}
+                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                    >
+                      <option value="text">Text proof</option>
+                      <option value="url">Link proof</option>
+                      <option value="tweet">X post URL</option>
+                      <option value="discord">Discord username</option>
+                      <option value="wallet">Wallet / tx proof</option>
+                    </select>
+                  </label>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-bold text-blue-100">Category</span>
+                    <select
+                      value={form.category}
+                      onChange={(event) => setForm({ ...form, category: event.target.value })}
+                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                    >
+                      <option>Community</option>
+                      <option>Onchain</option>
+                      <option>Social</option>
+                      <option>Learning</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label className="grid gap-2">
+                    <span className="text-sm font-bold text-blue-100">Proof placeholder</span>
+                    <input
+                      value={form.proof_placeholder ?? ""}
+                      onChange={(event) => setForm({ ...form, proof_placeholder: event.target.value })}
+                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                      placeholder="https://x.com/yourname/status/..."
+                    />
+                  </label>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-bold text-blue-100">Proof example</span>
+                    <input
+                      value={form.proof_example ?? ""}
+                      onChange={(event) => setForm({ ...form, proof_example: event.target.value })}
+                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                      placeholder="https://x.com/questora_xyz/status/123"
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : null}
+
+            {questStep === 3 ? (
+              <div className="grid gap-5">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <label className="grid gap-2">
+                    <span className="text-sm font-bold text-blue-100">Quest type</span>
+                    <select
+                      value={form.quest_type}
+                      onChange={(event) => updateQuestType(event.target.value as QuestType)}
+                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                    >
+                      {questTypes.map((type) => (
+                        <option key={type} value={type}>
+                          {questTypeLabels[type]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-bold text-blue-100">Difficulty</span>
+                    <select
+                      value={form.difficulty}
+                      onChange={(event) => updateDifficulty(event.target.value as QuestDifficulty)}
+                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                    >
+                      {questDifficulties.map((difficulty) => (
+                        <option key={difficulty} value={difficulty}>
+                          {difficultyLabels[difficulty]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-bold text-blue-100">XP reward</span>
+                    <input
+                      required
+                      type="number"
+                      min={xpPolicy.min}
+                      max={xpPolicy.max}
+                      value={form.xp_reward}
+                      onChange={(event) => updateXpReward(Number(event.target.value))}
+                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                    />
+                    <span className="text-xs text-blue-200">
+                      Range {xpPolicy.min}-{xpPolicy.max} project XP. Global XP: {globalXpReward}.
+                    </span>
+                  </label>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-bold text-blue-100">Status</span>
+                    <select
+                      value={form.status}
+                      onChange={(event) => setForm({ ...form, status: event.target.value as QuestStatus })}
+                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                    >
+                      <option value="active">Active</option>
+                      <option value="draft">Draft</option>
+                      <option value="archived">Archived</option>
+                    </select>
+                  </label>
+                  <label className="grid gap-2 lg:col-span-2">
+                    <span className="text-sm font-bold text-blue-100">End date</span>
+                    <input
+                      type="datetime-local"
+                      value={toDatetimeLocalValue(form.ends_at)}
+                      onChange={(event) => setForm({ ...form, ends_at: fromDatetimeLocalValue(event.target.value) })}
+                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                    />
+                    <span className="text-xs text-blue-200">Leave empty if this quest has no deadline.</span>
+                  </label>
+                </div>
+                <div className="rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4">
+                  <div className="flex items-start gap-3">
+                    <ShieldCheck className="mt-0.5 shrink-0 text-cyan-200" size={20} />
+                    <div>
+                      <p className="font-black text-white">Anti-farming XP rules</p>
+                      <p className="mt-2 text-sm leading-6 text-blue-100">
+                        Project XP can be tuned inside this range for the project leaderboard. Global XP is capped by Questora and currently awards {globalXpReward} XP for this quest.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {questStep === 4 ? (
+              <div className="grid gap-5">
+                <div className="rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4">
+                  <p className="text-xs font-black uppercase tracking-wider text-cyan-200">Quest preview</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-wider text-base-blue">{selectedProject?.name ?? "Project"}</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{campaignPurpose}</span>
+                    <span className="rounded-full bg-cyan-950 px-3 py-1 text-xs font-bold uppercase tracking-wider text-cyan-100">{form.proof_type}</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{questTypeLabels[form.quest_type]}</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{difficultyLabels[form.difficulty]}</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">
+                      {form.ends_at ? `Ends ${formatQuestDeadline(form.ends_at)}` : "No deadline"}
+                    </span>
+                  </div>
+                  <h3 className="mt-4 text-2xl font-black text-white">{form.title || "Untitled quest"}</h3>
+                  <p className="mt-3 text-sm leading-6 text-blue-100">{form.description || "Add a description before publishing."}</p>
+                  {form.task_url ? (
+                    <p className="mt-3 break-all rounded-lg bg-white/10 p-3 text-sm font-semibold text-cyan-100">{form.task_url}</p>
+                  ) : null}
+                  {form.instructions ? <p className="mt-3 rounded-lg bg-white/10 p-3 text-sm leading-6 text-blue-50">{form.instructions}</p> : null}
+                  <p className="mt-4 font-black text-cyan-200">
+                    {form.xp_reward.toLocaleString()} project XP / {globalXpReward.toLocaleString()} global XP
+                  </p>
+                </div>
                 <button
-                  key={template.name}
-                  type="button"
-                  onClick={() => applyQuestTemplate(template.name)}
-                  className={`focus-ring rounded-lg border p-4 text-left transition ${
-                    selectedTemplate === template.name ? "border-cyan-200 bg-cyan-200/15" : "border-white/10 bg-white/10 hover:border-cyan-200/60"
-                  }`}
+                  type="submit"
+                  disabled={!canCreateQuest || !form.title.trim() || !form.description.trim()}
+                  className="focus-ring inline-flex w-full items-center justify-center gap-2 rounded-lg bg-base-blue px-5 py-3 font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                 >
-                  <p className="font-black text-white">{template.name}</p>
-                  <p className="mt-2 text-sm leading-5 text-blue-100">{template.summary}</p>
+                  <PlusCircle size={20} />
+                  Create quest
                 </button>
-              ))}
-            </div>
-          </div>
-          <label className="grid gap-2">
-            <span className="text-sm font-bold text-blue-100">Title</span>
-            <input
-              required
-              value={form.title}
-              onChange={(event) => setForm({ ...form, title: event.target.value })}
-              className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
-              placeholder="Join the Base Discord"
-            />
-          </label>
-
-          <label className="grid gap-2">
-            <span className="text-sm font-bold text-blue-100">Task link</span>
-            <input
-              value={form.task_url ?? ""}
-              onChange={(event) => setForm({ ...form, task_url: event.target.value })}
-              className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
-              placeholder="https://x.com/project, https://discord.gg/..., article URL, app URL"
-            />
-            <span className="text-xs text-blue-200">Shown to members as a direct button so they do not need to search for the project link.</span>
-          </label>
-
-          <label className="grid gap-2">
-            <span className="text-sm font-bold text-blue-100">Description</span>
-            <textarea
-              required
-              value={form.description}
-              onChange={(event) => setForm({ ...form, description: event.target.value })}
-              className="focus-ring min-h-32 rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
-              placeholder="Tell members what to do and what proof is expected."
-            />
-          </label>
-
-          <label className="grid gap-2">
-            <span className="text-sm font-bold text-blue-100">Step-by-step instructions</span>
-            <textarea
-              value={form.instructions ?? ""}
-              onChange={(event) => setForm({ ...form, instructions: event.target.value })}
-              className="focus-ring min-h-28 rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
-              placeholder="Example: Follow our X account, post your build idea, then submit the tweet URL."
-            />
-          </label>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">Quest type</span>
-              <select
-                value={form.quest_type}
-                onChange={(event) => updateQuestType(event.target.value as QuestType)}
-                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
-              >
-                {questTypes.map((type) => (
-                  <option key={type} value={type}>
-                    {questTypeLabels[type]}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">Difficulty</span>
-              <select
-                value={form.difficulty}
-                onChange={(event) => updateDifficulty(event.target.value as QuestDifficulty)}
-                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
-              >
-                {questDifficulties.map((difficulty) => (
-                  <option key={difficulty} value={difficulty}>
-                    {difficultyLabels[difficulty]}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">XP reward</span>
-              <input
-                required
-                type="number"
-                min={xpPolicy.min}
-                max={xpPolicy.max}
-                value={form.xp_reward}
-                onChange={(event) => updateXpReward(Number(event.target.value))}
-                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
-              />
-              <span className="text-xs text-blue-200">
-                Range {xpPolicy.min}-{xpPolicy.max} project XP. Global XP: {globalXpReward}.
-              </span>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">Status</span>
-              <select
-                value={form.status}
-                onChange={(event) => setForm({ ...form, status: event.target.value as QuestStatus })}
-                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
-              >
-                <option value="active">Active</option>
-                <option value="draft">Draft</option>
-                <option value="archived">Archived</option>
-              </select>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">Proof type</span>
-              <select
-                value={form.proof_type}
-                onChange={(event) => setForm({ ...form, proof_type: event.target.value as QuestInput["proof_type"] })}
-                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
-              >
-                <option value="text">Text proof</option>
-                <option value="url">Link proof</option>
-                <option value="tweet">X post URL</option>
-                <option value="discord">Discord username</option>
-                <option value="wallet">Wallet / tx proof</option>
-              </select>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">End date</span>
-              <input
-                type="datetime-local"
-                value={toDatetimeLocalValue(form.ends_at)}
-                onChange={(event) => setForm({ ...form, ends_at: fromDatetimeLocalValue(event.target.value) })}
-                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
-              />
-              <span className="text-xs text-blue-200">Leave empty if this quest has no deadline.</span>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">Category</span>
-              <select
-                value={form.category}
-                onChange={(event) => setForm({ ...form, category: event.target.value })}
-                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
-              >
-                <option>Community</option>
-                <option>Onchain</option>
-                <option>Social</option>
-                <option>Learning</option>
-              </select>
-            </label>
-          </div>
-
-          <div className="rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4">
-            <div className="flex items-start gap-3">
-              <ShieldCheck className="mt-0.5 shrink-0 text-cyan-200" size={20} />
-              <div>
-                <p className="font-black text-white">Anti-farming XP rules</p>
-                <p className="mt-2 text-sm leading-6 text-blue-100">
-                  Project XP can be tuned inside this range for the project leaderboard. Global XP is capped by Questora and currently awards {globalXpReward} XP for this quest.
-                </p>
               </div>
-            </div>
+            ) : null}
           </div>
+        </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">Proof placeholder</span>
-              <input
-                value={form.proof_placeholder ?? ""}
-                onChange={(event) => setForm({ ...form, proof_placeholder: event.target.value })}
-                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
-                placeholder="https://x.com/yourname/status/..."
-              />
-            </label>
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">Proof example</span>
-              <input
-                value={form.proof_example ?? ""}
-                onChange={(event) => setForm({ ...form, proof_example: event.target.value })}
-                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
-                placeholder="https://x.com/base/status/123"
-              />
-            </label>
-          </div>
-          {form.title ? (
-            <div className="rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4">
-              <p className="text-xs font-black uppercase tracking-wider text-cyan-200">Quest preview</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <span className="rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-wider text-base-blue">{form.category}</span>
-                <span className="rounded-full bg-cyan-950 px-3 py-1 text-xs font-bold uppercase tracking-wider text-cyan-100">{form.proof_type}</span>
-                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{questTypeLabels[form.quest_type]}</span>
-                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{difficultyLabels[form.difficulty]}</span>
-                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">
-                  {form.ends_at ? `Ends ${formatQuestDeadline(form.ends_at)}` : "No deadline"}
-                </span>
-              </div>
-              <h3 className="mt-3 text-xl font-black text-white">{form.title}</h3>
-              <p className="mt-2 text-sm leading-6 text-blue-100">{form.description}</p>
-              {form.task_url ? (
-                <p className="mt-3 break-all rounded-lg bg-white/10 p-3 text-sm font-semibold text-cyan-100">{form.task_url}</p>
-              ) : null}
-              {form.instructions ? <p className="mt-3 rounded-lg bg-white/10 p-3 text-sm leading-6 text-blue-50">{form.instructions}</p> : null}
-              <p className="mt-3 font-black text-cyan-200">
-                {form.xp_reward.toLocaleString()} project XP / {globalXpReward.toLocaleString()} global XP
-              </p>
-            </div>
+        <div className="mt-5 flex flex-col justify-between gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={goToPreviousQuestStep}
+            disabled={questStep === 0}
+            className="focus-ring inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/10 px-5 py-3 font-bold text-white transition hover:border-cyan-200/60 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ArrowLeft size={18} />
+            Back
+          </button>
+          {questStep < questWizardSteps.length - 1 ? (
+            <button
+              type="button"
+              onClick={goToNextQuestStep}
+              disabled={!canAdvanceQuestStep}
+              className="focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-cyan-200 px-5 py-3 font-black text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Continue
+              <ArrowRight size={18} />
+            </button>
           ) : null}
         </div>
-
-        <button
-          type="submit"
-          disabled={!canCreateQuest}
-          className="focus-ring mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-base-blue px-5 py-3 font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-        >
-          <PlusCircle size={20} />
-          Create quest
-        </button>
         {message ? <p className="mt-4 text-sm font-semibold text-cyan-200">{message}</p> : null}
       </form>
 
@@ -1337,8 +1522,10 @@ export default function AdminPage() {
           )}
         </div>
       </section>
+        </>
+      ) : null}
 
-      {adminContext?.is_platform_admin ? (
+      {activeStudioTab === "projects" && adminContext?.is_platform_admin ? (
         <section className="mt-6 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
           <div className="flex items-center gap-3">
             <FolderPlus className="text-cyan-200" />
@@ -1388,7 +1575,8 @@ export default function AdminPage() {
         </section>
       ) : null}
 
-      <section className="mt-6 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
+      {activeStudioTab === "submissions" ? (
+      <section className="mt-8 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
         <div className="flex items-center gap-3">
           <CheckCircle2 className="text-cyan-200" />
           <h2 className="text-xl font-black text-white">Review submissions</h2>
@@ -1456,6 +1644,7 @@ export default function AdminPage() {
           )}
         </div>
       </section>
+      ) : null}
     </div>
   );
 }

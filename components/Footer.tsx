@@ -51,9 +51,7 @@ export function Footer() {
         </div>
       </div>
       <div className="border-t border-white/10 px-4 py-4 text-center text-xs font-semibold text-blue-200">
-        <div className="mx-auto max-w-7xl">
-        © 2026 Questora. Built for communities that show up.
-        </div>
+        <div className="mx-auto max-w-7xl">&copy; 2026 Questora. Built for communities that show up.</div>
       </div>
     </footer>
   );
