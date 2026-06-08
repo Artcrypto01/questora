@@ -66,6 +66,8 @@ Run [supabase/retweet-quest-type.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMO
 
 Run [supabase/project-curation.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/project-curation.sql>) to add verified project and top campaign controls.
 
+Run [supabase/project-telegram-url.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/project-telegram-url.sql>) to add Telegram links for projects.
+
 Before going live, run [supabase/pre-live-audit.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/pre-live-audit.sql>) to check platform admins, pending submissions, active quests without deadlines, and anon write policies that should be reviewed.
 
 The schema creates:
@@ -110,7 +112,7 @@ Seed data is included at the bottom of [supabase/schema.sql](</D:/DEVELOPMENT/Pr
 For reference, the main table shape is:
 
 ```sql
-projects(id, name, slug, description, project_type, owner_wallet_address, logo_url, cover_image_url, website_url, discord_url, x_url, status, created_at)
+projects(id, name, slug, description, project_type, owner_wallet_address, logo_url, cover_image_url, website_url, discord_url, telegram_url, x_url, status, created_at)
 platform_admins(id, wallet_address, created_at)
 project_members(id, project_id, wallet_address, role, created_at)
 users(id, wallet_address, display_name, avatar_url, x_username, discord_username, bio, created_at)

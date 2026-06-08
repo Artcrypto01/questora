@@ -471,6 +471,7 @@ export async function updateProject(projectId: string, input: ProjectInput, acto
     cover_image_url: getImageUrl(input.cover_image_url),
     website_url: input.website_url?.trim() || null,
     discord_url: input.discord_url?.trim() || null,
+    telegram_url: input.telegram_url?.trim() || null,
     x_url: input.x_url?.trim() || null
   };
 

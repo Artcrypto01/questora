@@ -88,6 +88,7 @@ export type Project = {
   cover_image_url: string | null;
   website_url: string | null;
   discord_url: string | null;
+  telegram_url: string | null;
   x_url: string | null;
   status: QuestStatus;
   is_verified: boolean;
@@ -100,7 +101,7 @@ export type Project = {
 
 export type ProjectInput = Pick<
   Project,
-  "name" | "slug" | "description" | "project_type" | "owner_wallet_address" | "logo_url" | "cover_image_url" | "website_url" | "discord_url" | "x_url" | "status"
+  "name" | "slug" | "description" | "project_type" | "owner_wallet_address" | "logo_url" | "cover_image_url" | "website_url" | "discord_url" | "telegram_url" | "x_url" | "status"
 >;
 
 export type ProjectCurationInput = Pick<Project, "is_verified" | "is_featured" | "featured_rank" | "featured_until">;

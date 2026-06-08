@@ -11,6 +11,7 @@ create table if not exists public.projects (
   cover_image_url text,
   website_url text,
   discord_url text,
+  telegram_url text,
   x_url text,
   status text not null default 'active' check (status in ('active', 'draft', 'archived')),
   is_verified boolean not null default false,
@@ -47,6 +48,7 @@ alter table public.projects add constraint projects_project_type_check check (pr
 alter table public.projects add column if not exists cover_image_url text;
 alter table public.projects add column if not exists website_url text;
 alter table public.projects add column if not exists discord_url text;
+alter table public.projects add column if not exists telegram_url text;
 alter table public.projects add column if not exists x_url text;
 alter table public.projects add column if not exists is_verified boolean not null default false;
 alter table public.projects add column if not exists verified_at timestamptz;

@@ -47,14 +47,10 @@ const useCases = [
 export default function LandingPage() {
   return (
     <div>
-      <section className="questora-hero-bg relative overflow-hidden border-b border-white/10">
+      <div className="questora-landing-flow questora-hero-bg relative overflow-hidden">
         <HeroParticleField />
-        <div className="questora-hero-grid" />
         <div className="questora-scanline" />
-        <div className="questora-hero-routes">
-          <span className="questora-route questora-route-one" />
-          <span className="questora-route questora-route-two" />
-        </div>
+        <div className="questora-hero-vignette" />
         <div className="questora-circuit-nodes" aria-hidden="true">
           <span />
           <span />
@@ -63,6 +59,7 @@ export default function LandingPage() {
           <span />
           <span />
         </div>
+      <section className="relative z-10">
         <div className="relative z-10 mx-auto grid min-h-[calc(100vh-76px)] max-w-7xl grid-cols-1 items-center gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[1fr_0.86fr] lg:px-8">
           <div className="max-w-3xl">
             <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-sm font-medium text-cyan-100 shadow-sm">
@@ -99,8 +96,8 @@ export default function LandingPage() {
           </div>
 
           <div className="relative">
-            <div className="questora-holo-card rounded-[2rem] border border-white/15 bg-white/10 p-4 shadow-glow backdrop-blur">
-              <div className="rounded-[1.4rem] bg-[#071832] p-5 text-white">
+            <div className="questora-holo-card questora-floating-panel rounded-[2rem] p-4 text-white shadow-glow backdrop-blur">
+              <div className="rounded-[1.4rem] bg-[#071832]/70 p-5">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold uppercase tracking-wider text-cyan-100">Season One</span>
                   <span className="rounded-full bg-cyan-200 px-3 py-1 text-sm font-black text-slate-950">Live graph</span>
@@ -149,11 +146,11 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-12 sm:px-6 md:grid-cols-3 lg:px-8">
+      <section className="relative z-10 mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-8 sm:px-6 md:grid-cols-3 lg:px-8">
         {features.map((feature) => {
           const Icon = feature.icon;
           return (
-            <article key={feature.title} className="rounded-lg border border-white/10 bg-[#0b1730]/90 p-6 shadow-glow">
+            <article key={feature.title} className="rounded-lg border border-white/10 bg-white/[0.07] p-6 shadow-glow backdrop-blur-xl">
               <Icon className="text-cyan-200" size={28} />
               <h2 className="mt-5 text-xl font-bold text-white">{feature.title}</h2>
               <p className="mt-3 leading-7 text-blue-100">{feature.body}</p>
@@ -162,7 +159,7 @@ export default function LandingPage() {
         })}
       </section>
 
-      <section className="border-t border-white/10 bg-[#061022]/70">
+      <section className="relative z-10">
         <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
           <div className="max-w-3xl">
             <p className="font-semibold text-cyan-200">More than simple quests</p>
@@ -176,7 +173,7 @@ export default function LandingPage() {
             {useCases.map((useCase) => {
               const Icon = useCase.icon;
               return (
-                <article key={useCase.title} className="rounded-lg border border-white/10 bg-white/10 p-5">
+                <article key={useCase.title} className="rounded-lg border border-white/10 bg-white/[0.08] p-5 shadow-glow backdrop-blur-xl">
                   <Icon className="text-cyan-200" size={24} />
                   <h3 className="mt-4 text-lg font-black text-white">{useCase.title}</h3>
                   <p className="mt-2 text-sm leading-6 text-blue-100">{useCase.body}</p>
@@ -186,6 +183,7 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+      </div>
     </div>
   );
 }

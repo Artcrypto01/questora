@@ -177,6 +177,7 @@ const initialProjectForm: ProjectInput = {
   cover_image_url: "",
   website_url: "",
   discord_url: "",
+  telegram_url: "",
   x_url: "",
   status: "active"
 };
@@ -225,6 +226,7 @@ export default function AdminPage() {
       cover_image_url: project.cover_image_url ?? "",
       website_url: project.website_url ?? "",
       discord_url: project.discord_url ?? "",
+      telegram_url: project.telegram_url ?? "",
       x_url: project.x_url ?? "",
       status: project.status
     };
@@ -736,7 +738,7 @@ export default function AdminPage() {
               <span className="text-xs text-blue-200">Use a direct image URL, not an album or gallery page.</span>
             </label>
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <label className="grid gap-2">
               <span className="text-sm font-bold text-blue-100">Website</span>
               <input
@@ -753,6 +755,15 @@ export default function AdminPage() {
                 onChange={(event) => setProjectForm({ ...projectForm, discord_url: event.target.value })}
                 className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
                 placeholder="https://discord.gg/..."
+              />
+            </label>
+            <label className="grid gap-2">
+              <span className="text-sm font-bold text-blue-100">Telegram</span>
+              <input
+                value={projectForm.telegram_url ?? ""}
+                onChange={(event) => setProjectForm({ ...projectForm, telegram_url: event.target.value })}
+                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                placeholder="https://t.me/..."
               />
             </label>
             <label className="grid gap-2">
@@ -861,7 +872,7 @@ export default function AdminPage() {
                         />
                       </label>
                     </div>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                       <label className="grid gap-2">
                         <span className="text-sm font-bold text-blue-100">Website</span>
                         <input
@@ -875,6 +886,14 @@ export default function AdminPage() {
                         <input
                           value={editProjectForm.discord_url ?? ""}
                           onChange={(event) => setEditProjectForm({ ...editProjectForm, discord_url: event.target.value })}
+                          className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                        />
+                      </label>
+                      <label className="grid gap-2">
+                        <span className="text-sm font-bold text-blue-100">Telegram</span>
+                        <input
+                          value={editProjectForm.telegram_url ?? ""}
+                          onChange={(event) => setEditProjectForm({ ...editProjectForm, telegram_url: event.target.value })}
                           className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
                         />
                       </label>

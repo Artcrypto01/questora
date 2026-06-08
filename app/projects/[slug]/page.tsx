@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowUpRight, BadgeCheck, Globe, MessageCircle, ShieldCheck, Star, Trophy, UserRound } from "lucide-react";
+import { ArrowUpRight, BadgeCheck, Globe, MessageCircle, Send, ShieldCheck, Star, Trophy, UserRound } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
 import { getProjectBySlug, getProjectLeaderboard, getProjectStats, getQuestsByProject } from "@/lib/quest-service";
 import type { ProofType, Project, Quest, UserProfile } from "@/lib/types";
@@ -95,6 +95,7 @@ export default function ProjectDetailPage() {
           <div className="flex flex-wrap gap-2">
             {project.website_url ? <ProjectLink href={project.website_url} label="Website" icon={Globe} /> : null}
             {project.discord_url ? <ProjectLink href={project.discord_url} label="Discord" icon={MessageCircle} /> : null}
+            {project.telegram_url ? <ProjectLink href={project.telegram_url} label="Telegram" icon={Send} /> : null}
             {project.x_url ? <ProjectLink href={project.x_url} label="X" icon={ArrowUpRight} /> : null}
           </div>
         </div>

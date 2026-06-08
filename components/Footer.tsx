@@ -11,7 +11,7 @@ const footerLinks = [
 export function Footer() {
   return (
     <footer className="border-t border-white/10 bg-[#061022]/90">
-      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:px-6 md:grid-cols-[1.2fr_1fr] lg:px-8">
+      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
         <div>
           <Link href="/" className="focus-ring inline-flex items-center gap-3 rounded-lg">
             <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-white shadow-sm">
@@ -24,8 +24,8 @@ export function Footer() {
           </p>
         </div>
 
-        <div className="grid gap-4 md:justify-self-end">
-          <nav className="flex flex-wrap gap-2 sm:max-w-xs">
+        <div className="flex flex-col gap-3 md:items-end">
+          <nav className="flex flex-wrap gap-2 md:justify-end">
             {footerLinks.map((item) => (
               <Link
                 key={item.href}
@@ -36,7 +36,7 @@ export function Footer() {
               </Link>
             ))}
           </nav>
-          <div className="flex text-sm font-semibold text-blue-100 md:justify-end">
+          <div className="flex text-sm font-semibold text-blue-100">
             <a
               href="https://x.com/questora_xyz"
               target="_blank"
@@ -51,7 +51,9 @@ export function Footer() {
         </div>
       </div>
       <div className="border-t border-white/10 px-4 py-4 text-center text-xs font-semibold text-blue-200">
+        <div className="mx-auto max-w-7xl">
         © 2026 Questora. Built for communities that show up.
+        </div>
       </div>
     </footer>
   );
