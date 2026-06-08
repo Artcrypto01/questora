@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, CheckCircle2, Clock3, Loader2, Send, Zap } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, Clock3, Loader2, Send, ShieldCheck, Star, Zap } from "lucide-react";
 import { useState } from "react";
 import { ProjectImage } from "@/components/ProjectImage";
 import type { Quest, UserQuest } from "@/lib/types";
@@ -63,6 +63,7 @@ export function QuestCard({ quest, completion, disabled, loading, onComplete }: 
   const proofCopy = getProofCopy(quest);
   const requiresUrl = quest.proof_type === "tweet" || quest.proof_type === "url";
   const hasRequiredProof = requiresUrl ? Boolean(proofUrl.trim()) : Boolean(proofText.trim() || proofUrl.trim());
+  const featuredActive = Boolean(quest.project_is_featured && (!quest.project_featured_until || new Date(quest.project_featured_until).getTime() > Date.now()));
 
   return (
     <article className="group overflow-hidden rounded-lg border border-white/10 bg-[#0b1730]/95 shadow-glow transition hover:-translate-y-0.5 hover:border-blue-300/40">
@@ -75,7 +76,21 @@ export function QuestCard({ quest, completion, disabled, loading, onComplete }: 
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-black text-white">{quest.project_name || "Questora project"}</p>
-            {quest.project_type ? <p className="text-xs font-semibold text-cyan-200">{quest.project_type}</p> : null}
+            <div className="mt-1 flex flex-wrap gap-1">
+              {quest.project_type ? <span className="text-xs font-semibold text-cyan-200">{quest.project_type}</span> : null}
+              {quest.project_is_verified ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-300 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-950">
+                  <ShieldCheck size={11} />
+                  Verified
+                </span>
+              ) : null}
+              {featuredActive ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-300 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-950">
+                  <Star size={11} />
+                  Top #{quest.project_featured_rank ?? 1}
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
         {ended || effectiveStatus ? (

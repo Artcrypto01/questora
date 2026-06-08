@@ -2,8 +2,8 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
-import { Archive, CheckCircle2, Download, FolderPlus, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
-import { createProject, createQuest, getAdminContext, getManageableProjects, getManageableQuests, getQualifiedUsers, getQuestSubmissions, reviewProject, reviewQuestSubmission, updateProject, updateQuestStatus } from "@/lib/quest-service";
+import { Archive, CheckCircle2, Download, FolderPlus, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
+import { createProject, createQuest, getAdminContext, getManageableProjects, getManageableQuests, getQualifiedUsers, getQuestSubmissions, reviewProject, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
 import type { AdminContext, Project, ProjectInput, ProjectType, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, fromDatetimeLocalValue, isQuestEnded, toDatetimeLocalValue } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp, difficultyLabels, getQuestXpPolicy, questTypeLabels } from "@/lib/xp-policy";
@@ -194,6 +194,7 @@ export default function AdminPage() {
   const [projectForm, setProjectForm] = useState(initialProjectForm);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editProjectForm, setEditProjectForm] = useState(initialProjectForm);
+  const [curationForms, setCurationForms] = useState<Record<string, { featured_rank: string; featured_until: string }>>({});
   const [form, setForm] = useState(initialForm);
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
@@ -251,6 +252,21 @@ export default function AdminPage() {
     getQuestSubmissions(address).then(setSubmissions);
     getQualifiedUsers(address).then(setQualifiedUsers);
   }, [address]);
+
+  useEffect(() => {
+    setCurationForms((current) => {
+      const next = { ...current };
+      for (const project of projects) {
+        if (!next[project.id]) {
+          next[project.id] = {
+            featured_rank: String(project.featured_rank ?? 1),
+            featured_until: toDatetimeLocalValue(project.featured_until)
+          };
+        }
+      }
+      return next;
+    });
+  }, [projects]);
 
   async function handleProjectSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -354,6 +370,34 @@ export default function AdminPage() {
     await reviewProject(projectId, status, address);
     setProjects(await getManageableProjects(address));
     setMessage(status === "active" ? "Project approved." : "Project rejected.");
+  }
+
+  async function handleProjectCuration(project: Project, patch: Partial<Pick<Project, "is_verified" | "is_featured">>) {
+    if (!address) {
+      setMessage("Connect a platform admin wallet before curating projects.");
+      return;
+    }
+
+    const curationForm = curationForms[project.id] ?? { featured_rank: String(project.featured_rank ?? 1), featured_until: toDatetimeLocalValue(project.featured_until) };
+    const isFeatured = patch.is_featured ?? project.is_featured;
+    const featuredRank = Math.min(5, Math.max(1, Number(curationForm.featured_rank || project.featured_rank || 1)));
+
+    try {
+      await updateProjectCuration(
+        project.id,
+        {
+          is_verified: patch.is_verified ?? project.is_verified,
+          is_featured: isFeatured,
+          featured_rank: isFeatured ? featuredRank : null,
+          featured_until: isFeatured ? fromDatetimeLocalValue(curationForm.featured_until) : null
+        },
+        address
+      );
+      setProjects(await getManageableProjects(address));
+      setMessage("Project curation updated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to update project curation.");
+    }
   }
 
   async function handleQuestStatus(questId: string, status: QuestStatus) {
@@ -859,19 +903,89 @@ export default function AdminPage() {
                       <div className="flex flex-wrap gap-2">
                         <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-950">{project.status}</span>
                         <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{project.project_type}</span>
+                        {project.is_verified ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-300 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-950"><ShieldCheck size={13} /> Verified</span> : null}
+                        {project.is_featured ? <span className="inline-flex items-center gap-1 rounded-full bg-amber-300 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-950"><Star size={13} /> Top #{project.featured_rank ?? 1}</span> : null}
                       </div>
                       <h3 className="mt-3 font-black text-white">{project.name}</h3>
                       <p className="mt-1 line-clamp-2 text-sm text-blue-100">{project.description || "No description"}</p>
                       <p className="mt-2 break-all text-xs text-blue-200">/{project.slug}</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleEditProject(project)}
-                      className="focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-black text-base-blue"
-                    >
-                      <Pencil size={16} />
-                      Edit
-                    </button>
+                    <div className="flex flex-col gap-2 md:min-w-72">
+                      {adminContext?.is_platform_admin ? (
+                        <div className="rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-3">
+                          <p className="text-xs font-black uppercase tracking-wider text-cyan-200">Platform curation</p>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleProjectCuration(project, { is_verified: !project.is_verified })}
+                              className={`focus-ring inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-black ${project.is_verified ? "bg-emerald-300 text-slate-950" : "bg-white/10 text-white"}`}
+                            >
+                              <ShieldCheck size={16} />
+                              {project.is_verified ? "Verified" : "Verify"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleProjectCuration(project, { is_featured: !project.is_featured })}
+                              className={`focus-ring inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-black ${project.is_featured ? "bg-amber-300 text-slate-950" : "bg-white/10 text-white"}`}
+                            >
+                              <Star size={16} />
+                              {project.is_featured ? "Featured" : "Feature"}
+                            </button>
+                          </div>
+                          <div className="mt-3 grid grid-cols-[88px_1fr_auto] gap-2">
+                            <select
+                              value={curationForms[project.id]?.featured_rank ?? String(project.featured_rank ?? 1)}
+                              onChange={(event) =>
+                                setCurationForms((current) => ({
+                                  ...current,
+                                  [project.id]: {
+                                    featured_rank: event.target.value,
+                                    featured_until: current[project.id]?.featured_until ?? toDatetimeLocalValue(project.featured_until)
+                                  }
+                                }))
+                              }
+                              className="focus-ring rounded-lg border border-white/10 bg-white/10 px-2 py-2 text-sm font-bold text-white"
+                            >
+                              {[1, 2, 3, 4, 5].map((rank) => (
+                                <option key={rank} value={rank}>
+                                  #{rank}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="datetime-local"
+                              value={curationForms[project.id]?.featured_until ?? toDatetimeLocalValue(project.featured_until)}
+                              onChange={(event) =>
+                                setCurationForms((current) => ({
+                                  ...current,
+                                  [project.id]: {
+                                    featured_rank: current[project.id]?.featured_rank ?? String(project.featured_rank ?? 1),
+                                    featured_until: event.target.value
+                                  }
+                                }))
+                              }
+                              className="focus-ring min-w-0 rounded-lg border border-white/10 bg-white/10 px-2 py-2 text-sm text-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleProjectCuration(project, {})}
+                              className="focus-ring rounded-lg bg-white px-3 py-2 text-sm font-black text-base-blue"
+                            >
+                              Save
+                            </button>
+                          </div>
+                          <p className="mt-2 text-xs text-blue-200">Leave date empty for no expiry.</p>
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => handleEditProject(project)}
+                        className="focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-black text-base-blue"
+                      >
+                        <Pencil size={16} />
+                        Edit
+                      </button>
+                    </div>
                   </div>
                 )}
               </article>

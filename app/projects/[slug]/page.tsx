@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowUpRight, BadgeCheck, Globe, MessageCircle, Trophy, UserRound } from "lucide-react";
+import { ArrowUpRight, BadgeCheck, Globe, MessageCircle, ShieldCheck, Star, Trophy, UserRound } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
 import { getProjectBySlug, getProjectLeaderboard, getProjectStats, getQuestsByProject } from "@/lib/quest-service";
 import type { ProofType, Project, Quest, UserProfile } from "@/lib/types";
@@ -58,6 +58,8 @@ export default function ProjectDetailPage() {
     );
   }
 
+  const featuredActive = Boolean(project.is_featured && (!project.featured_until || new Date(project.featured_until).getTime() > Date.now()));
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       <section className="overflow-hidden rounded-2xl border border-white/10 bg-[#0b1730]/92 shadow-glow">
@@ -73,6 +75,18 @@ export default function ProjectDetailPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <p className="font-semibold text-cyan-200">Project</p>
                 <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">{project.project_type}</span>
+                {project.is_verified ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-300 px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">
+                    <ShieldCheck size={14} />
+                    Verified
+                  </span>
+                ) : null}
+                {featuredActive ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-300 px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">
+                    <Star size={14} />
+                    Top campaign #{project.featured_rank ?? 1}
+                  </span>
+                ) : null}
               </div>
               <h1 className="mt-1 text-4xl font-black text-white">{project.name}</h1>
               <p className="mt-3 max-w-2xl leading-7 text-blue-100">{project.description || "No description yet."}</p>

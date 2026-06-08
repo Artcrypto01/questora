@@ -26,6 +26,10 @@ export type Quest = {
   project_name?: string;
   project_logo_url?: string | null;
   project_type?: ProjectType;
+  project_is_verified?: boolean;
+  project_is_featured?: boolean;
+  project_featured_rank?: number | null;
+  project_featured_until?: string | null;
 };
 
 export type UserProfile = {
@@ -86,6 +90,11 @@ export type Project = {
   discord_url: string | null;
   x_url: string | null;
   status: QuestStatus;
+  is_verified: boolean;
+  verified_at: string | null;
+  is_featured: boolean;
+  featured_rank: number | null;
+  featured_until: string | null;
   created_at?: string;
 };
 
@@ -93,6 +102,8 @@ export type ProjectInput = Pick<
   Project,
   "name" | "slug" | "description" | "project_type" | "owner_wallet_address" | "logo_url" | "cover_image_url" | "website_url" | "discord_url" | "x_url" | "status"
 >;
+
+export type ProjectCurationInput = Pick<Project, "is_verified" | "is_featured" | "featured_rank" | "featured_until">;
 
 export type QuestInput = Pick<
   Quest,

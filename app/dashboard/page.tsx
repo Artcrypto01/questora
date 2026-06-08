@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
-import { Badge, CheckCircle2, ListFilter, Loader2, Search, Sparkles } from "lucide-react";
+import { Badge, CheckCircle2, ListFilter, Loader2, Search, ShieldCheck, Sparkles, Star } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
 import { QuestCard } from "@/components/QuestCard";
 import { StatCard } from "@/components/StatCard";
@@ -11,6 +11,10 @@ import { getOrCreateUser, getProjects, getQuests, getUserCompletions, completeQu
 import type { Project, ProjectType, Quest, UserProfile, UserQuest } from "@/lib/types";
 
 const projectTypes: Array<"All" | ProjectType> = ["All", "NFT", "Meme", "AI", "DeFi", "Gaming", "DAO", "Social", "Education", "Tooling", "Other"];
+
+function isProjectFeaturedActive(project: Project) {
+  return Boolean(project.is_featured && (!project.featured_until || new Date(project.featured_until).getTime() > Date.now()));
+}
 
 export default function DashboardPage() {
   const { address, isConnected } = useAccount();
@@ -73,6 +77,8 @@ export default function DashboardPage() {
     const query = searchQuery.trim().toLowerCase();
     const visibleProjectIds = new Set(filteredProjects.map((project) => project.id));
 
+    const projectOrder = new Map(filteredProjects.map((project, index) => [project.id, index]));
+
     return quests.filter((quest) => {
       const project = projects.find((item) => item.id === quest.project_id);
       const matchesProjectFilters = visibleProjectIds.has(quest.project_id ?? "");
@@ -85,7 +91,7 @@ export default function DashboardPage() {
         project?.project_type.toLowerCase().includes(query);
 
       return matchesProjectFilters && matchesSearch;
-    });
+    }).sort((a, b) => (projectOrder.get(a.project_id ?? "") ?? 9999) - (projectOrder.get(b.project_id ?? "") ?? 9999));
   }, [filteredProjects, projects, quests, searchQuery]);
 
   const earnedXp = user?.total_xp ?? 0;
@@ -143,6 +149,20 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-2">
                     <p className="truncate font-black text-white">{project.name}</p>
                     <span className="shrink-0 rounded-full bg-cyan-200 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-950">{project.project_type}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {project.is_verified ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-300 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-950">
+                        <ShieldCheck size={11} />
+                        Verified
+                      </span>
+                    ) : null}
+                    {isProjectFeaturedActive(project) ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-300 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-950">
+                        <Star size={11} />
+                        Top #{project.featured_rank ?? 1}
+                      </span>
+                    ) : null}
                   </div>
                   <p className="truncate text-sm text-blue-100">{project.description || "Open quest hub"}</p>
                 </div>

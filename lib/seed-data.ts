@@ -13,7 +13,12 @@ export const seedProjects: Project[] = [
     website_url: "",
     discord_url: "",
     x_url: "",
-    status: "active"
+    status: "active",
+    is_verified: true,
+    verified_at: new Date().toISOString(),
+    is_featured: true,
+    featured_rank: 1,
+    featured_until: null
   },
   {
     id: "project-builder-guild",
@@ -27,7 +32,12 @@ export const seedProjects: Project[] = [
     website_url: "",
     discord_url: "",
     x_url: "",
-    status: "active"
+    status: "active",
+    is_verified: false,
+    verified_at: null,
+    is_featured: true,
+    featured_rank: 2,
+    featured_until: null
   }
 ];
 
@@ -57,11 +67,11 @@ export const seedQuests: Quest[] = [
     project_name: "Questora",
     title: "Complete a Base test transaction",
     description: "Complete a simple onchain action and submit transaction proof.",
-    task_url: "https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet",
-    instructions: "Complete the bridge or faucet flow and paste a transaction link or hash.",
+    task_url: "https://bridge.base.org/",
+    instructions: "Complete the requested Base action and paste a transaction link or hash.",
     proof_type: "wallet",
-    proof_placeholder: "Transaction hash or Base Sepolia explorer URL",
-    proof_example: "0x1234... or https://sepolia.basescan.org/tx/...",
+    proof_placeholder: "Transaction hash or Base explorer URL",
+    proof_example: "0x1234... or https://basescan.org/tx/...",
     quest_type: "onchain",
     difficulty: "medium",
     xp_reward: 300,

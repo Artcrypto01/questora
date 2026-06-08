@@ -1,6 +1,6 @@
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import { seedCompletions, seedProjects, seedQuests, seedUsers } from "@/lib/seed-data";
-import type { AdminContext, Project, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
+import type { AdminContext, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
 import { getImageUrl, isQuestEnded, normalizeWallet } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp } from "@/lib/xp-policy";
 
@@ -92,6 +92,24 @@ function getConfiguredPlatformAdmins() {
 
 function hasProjectAccess(context: AdminContext, projectId?: string | null) {
   return Boolean(projectId && (context.is_platform_admin || context.project_ids.includes(projectId)));
+}
+
+function isFeaturedActive(project: Pick<Project, "is_featured" | "featured_until">) {
+  return Boolean(project.is_featured && (!project.featured_until || new Date(project.featured_until).getTime() > Date.now()));
+}
+
+function sortProjects(projects: Project[]) {
+  return [...projects].sort((a, b) => {
+    const aFeatured = isFeaturedActive(a);
+    const bFeatured = isFeaturedActive(b);
+    if (aFeatured !== bFeatured) return aFeatured ? -1 : 1;
+    if (aFeatured && bFeatured) {
+      const rankDiff = (a.featured_rank ?? 999) - (b.featured_rank ?? 999);
+      if (rankDiff !== 0) return rankDiff;
+    }
+    if (a.is_verified !== b.is_verified) return a.is_verified ? -1 : 1;
+    return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
+  });
 }
 
 function formatDatabaseError(error: unknown, fallback = "Something went wrong.") {
@@ -212,14 +230,18 @@ export async function getQuests(): Promise<Quest[]> {
         ...quest,
         project_name: project?.name ?? quest.project_name,
         project_logo_url: project?.logo_url,
-        project_type: project?.project_type
+        project_type: project?.project_type,
+        project_is_verified: project?.is_verified,
+        project_is_featured: project?.is_featured,
+        project_featured_rank: project?.featured_rank,
+        project_featured_until: project?.featured_until
       };
     });
   }
 
   const { data, error } = await assertSupabase()
     .from("quests")
-    .select("*, projects(name, status, logo_url, project_type)")
+    .select("*, projects(name, status, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until)")
     .neq("status", "archived")
     .eq("projects.status", "active")
     .order("created_at", { ascending: false });
@@ -230,7 +252,11 @@ export async function getQuests(): Promise<Quest[]> {
       ...quest,
       project_name: quest.projects?.name,
       project_logo_url: quest.projects?.logo_url,
-      project_type: quest.projects?.project_type
+      project_type: quest.projects?.project_type,
+      project_is_verified: quest.projects?.is_verified,
+      project_is_featured: quest.projects?.is_featured,
+      project_featured_rank: quest.projects?.featured_rank,
+      project_featured_until: quest.projects?.featured_until
     }));
 }
 
@@ -241,12 +267,12 @@ export async function getQuestsByProject(projectId: string): Promise<Quest[]> {
 
 export async function getProjects(): Promise<Project[]> {
   if (!hasSupabaseConfig) {
-    return localProjects.filter((project) => project.status === "active");
+    return sortProjects(localProjects.filter((project) => project.status === "active"));
   }
 
   const { data, error } = await assertSupabase().from("projects").select("*").eq("status", "active").order("created_at", { ascending: false });
   if (error) throw error;
-  return data ?? [];
+  return sortProjects((data ?? []) as Project[]);
 }
 
 export async function getAllProjectsForAdmin(walletAddress?: string | null): Promise<Project[]> {
@@ -255,14 +281,14 @@ export async function getAllProjectsForAdmin(walletAddress?: string | null): Pro
 
   if (!hasSupabaseConfig) {
     const projects = localProjects.filter((project) => project.status !== "archived");
-    if (context.is_platform_admin) return projects;
-    return projects.filter((project) => context.project_ids.includes(project.id));
+    if (context.is_platform_admin) return sortProjects(projects);
+    return sortProjects(projects.filter((project) => context.project_ids.includes(project.id)));
   }
 
   const { data, error } = await assertSupabase().from("projects").select("*").neq("status", "archived").order("created_at", { ascending: false });
   if (error) throw error;
-  if (context.is_platform_admin) return data ?? [];
-  return (data ?? []).filter((project) => context.project_ids.includes(project.id));
+  if (context.is_platform_admin) return sortProjects((data ?? []) as Project[]);
+  return sortProjects(((data ?? []) as Project[]).filter((project) => context.project_ids.includes(project.id)));
 }
 
 export async function getAdminContext(walletAddress?: string | null): Promise<AdminContext | null> {
@@ -391,7 +417,12 @@ export async function createProject(input: ProjectInput): Promise<Project> {
   if (!hasSupabaseConfig) {
     const project = {
       id: crypto.randomUUID(),
-      ...projectInput
+      ...projectInput,
+      is_verified: false,
+      verified_at: null,
+      is_featured: false,
+      featured_rank: null,
+      featured_until: null
     };
     localProjects = [project, ...localProjects];
     if (project.owner_wallet_address) {
@@ -466,6 +497,43 @@ export async function updateProject(projectId: string, input: ProjectInput, acto
   return data;
 }
 
+export async function updateProjectCuration(projectId: string, input: ProjectCurationInput, actorWalletAddress?: string | null): Promise<Project> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context?.is_platform_admin) {
+    throw new Error("Only platform admins can curate projects.");
+  }
+
+  const curationInput = {
+    is_verified: input.is_verified,
+    verified_at: input.is_verified ? new Date().toISOString() : null,
+    is_featured: input.is_featured,
+    featured_rank: input.is_featured ? input.featured_rank : null,
+    featured_until: input.is_featured ? input.featured_until || null : null
+  };
+
+  if (!hasSupabaseConfig) {
+    let updatedProject: Project | null = null;
+    localProjects = localProjects.map((project) => {
+      if (project.id !== projectId) return project;
+      updatedProject = {
+        ...project,
+        ...curationInput
+      };
+      return updatedProject;
+    });
+
+    if (!updatedProject) {
+      throw new Error("Project not found.");
+    }
+
+    return updatedProject;
+  }
+
+  const { data, error } = await assertSupabase().from("projects").update(curationInput).eq("id", projectId).select("*").single();
+  if (error) throw error;
+  return data;
+}
+
 export async function reviewProject(projectId: string, status: "active" | "archived", actorWalletAddress?: string | null) {
   const context = await getAdminContext(actorWalletAddress);
   if (!context?.is_platform_admin) {
@@ -517,13 +585,17 @@ export async function createQuest(input: QuestInput, actorWalletAddress?: string
     throw new Error("Project must be approved before quests can be created.");
   }
 
-  const { data, error } = await client.from("quests").insert(questInput).select("*, projects(name, logo_url, project_type)").single();
+  const { data, error } = await client.from("quests").insert(questInput).select("*, projects(name, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until)").single();
   if (error) throw new Error(formatDatabaseError(error, "Failed to create quest."));
   return {
     ...data,
     project_name: data.projects?.name,
     project_logo_url: data.projects?.logo_url,
-    project_type: data.projects?.project_type
+    project_type: data.projects?.project_type,
+    project_is_verified: data.projects?.is_verified,
+    project_is_featured: data.projects?.is_featured,
+    project_featured_rank: data.projects?.featured_rank,
+    project_featured_until: data.projects?.featured_until
   };
 }
 
@@ -538,13 +610,17 @@ export async function getManageableQuests(actorWalletAddress?: string | null): P
         ...quest,
         project_name: localProjects.find((project) => project.id === quest.project_id)?.name,
         project_logo_url: localProjects.find((project) => project.id === quest.project_id)?.logo_url,
-        project_type: localProjects.find((project) => project.id === quest.project_id)?.project_type
+        project_type: localProjects.find((project) => project.id === quest.project_id)?.project_type,
+        project_is_verified: localProjects.find((project) => project.id === quest.project_id)?.is_verified,
+        project_is_featured: localProjects.find((project) => project.id === quest.project_id)?.is_featured,
+        project_featured_rank: localProjects.find((project) => project.id === quest.project_id)?.featured_rank,
+        project_featured_until: localProjects.find((project) => project.id === quest.project_id)?.featured_until
       }));
   }
 
   const { data, error } = await assertSupabase()
     .from("quests")
-    .select("*, projects(name, logo_url, project_type)")
+    .select("*, projects(name, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until)")
     .order("created_at", { ascending: false });
 
   if (error) throw error;
@@ -554,7 +630,11 @@ export async function getManageableQuests(actorWalletAddress?: string | null): P
       ...quest,
       project_name: quest.projects?.name,
       project_logo_url: quest.projects?.logo_url,
-      project_type: quest.projects?.project_type
+      project_type: quest.projects?.project_type,
+      project_is_verified: quest.projects?.is_verified,
+      project_is_featured: quest.projects?.is_featured,
+      project_featured_rank: quest.projects?.featured_rank,
+      project_featured_until: quest.projects?.featured_until
     }));
 }
 

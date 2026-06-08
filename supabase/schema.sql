@@ -13,8 +13,14 @@ create table if not exists public.projects (
   discord_url text,
   x_url text,
   status text not null default 'active' check (status in ('active', 'draft', 'archived')),
+  is_verified boolean not null default false,
+  verified_at timestamptz,
+  is_featured boolean not null default false,
+  featured_rank integer,
+  featured_until timestamptz,
   created_at timestamptz not null default now(),
-  constraint projects_owner_wallet_lowercase check (owner_wallet_address is null or owner_wallet_address = lower(owner_wallet_address))
+  constraint projects_owner_wallet_lowercase check (owner_wallet_address is null or owner_wallet_address = lower(owner_wallet_address)),
+  constraint projects_featured_rank_check check (featured_rank is null or (featured_rank >= 1 and featured_rank <= 5))
 );
 
 create table if not exists public.platform_admins (
@@ -42,6 +48,14 @@ alter table public.projects add column if not exists cover_image_url text;
 alter table public.projects add column if not exists website_url text;
 alter table public.projects add column if not exists discord_url text;
 alter table public.projects add column if not exists x_url text;
+alter table public.projects add column if not exists is_verified boolean not null default false;
+alter table public.projects add column if not exists verified_at timestamptz;
+alter table public.projects add column if not exists is_featured boolean not null default false;
+alter table public.projects add column if not exists featured_rank integer;
+alter table public.projects add column if not exists featured_until timestamptz;
+alter table public.projects drop constraint if exists projects_featured_rank_check;
+alter table public.projects add constraint projects_featured_rank_check check (featured_rank is null or (featured_rank >= 1 and featured_rank <= 5));
+create index if not exists projects_featured_sort_idx on public.projects (is_featured, featured_rank, featured_until, is_verified, created_at);
 
 create table if not exists public.campaigns (
   id uuid primary key default gen_random_uuid(),
@@ -298,13 +312,13 @@ create policy "User badges can be awarded for MVP" on public.user_badges
   for insert with check (true);
 
 insert into public.campaigns (name, description, status)
-values ('Questora Season One', 'Starter campaign for Base Sepolia community quests.', 'active')
+values ('Questora Season One', 'Starter campaign for Base community quests.', 'active')
 on conflict do nothing;
 
-insert into public.projects (name, slug, description, project_type, status)
+insert into public.projects (name, slug, description, project_type, status, is_verified, is_featured, featured_rank)
 values
-  ('Questora', 'questora', 'Starter Base Sepolia community quest hub.', 'Social', 'active'),
-  ('Builder Guild', 'builder-guild', 'A project for builders learning and shipping on Base.', 'Education', 'active')
+  ('Questora', 'questora', 'Starter Base community quest hub.', 'Social', 'active', true, true, 1),
+  ('Builder Guild', 'builder-guild', 'A project for builders learning and shipping on Base.', 'Education', 'active', false, true, 2)
 on conflict do nothing;
 
 insert into public.project_members (project_id, wallet_address, role)
@@ -338,7 +352,7 @@ where project_id is null;
 insert into public.quests (project_id, title, description, task_url, instructions, proof_type, proof_placeholder, proof_example, quest_type, difficulty, xp_reward, global_xp_reward, status, category, ends_at)
 values
   ((select id from public.projects where slug = 'questora'), 'Join the Base community', 'Join the official community channel and introduce yourself to other builders.', null, 'Join Discord, introduce yourself, then paste your Discord username here.', 'discord', 'yourname#1234 or @username', '@basebuilder', 'join_discord', 'medium', 50, 15, 'active', 'Community', null),
-  ((select id from public.projects where slug = 'questora'), 'Bridge test ETH to Base Sepolia', 'Use the Base Sepolia bridge or faucet flow to prepare your wallet for testnet quests.', 'https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet', 'Complete the bridge or faucet flow and paste a transaction link or hash.', 'wallet', 'Transaction hash or Base Sepolia explorer URL', '0x1234... or https://sepolia.basescan.org/tx/...', 'onchain', 'medium', 300, 100, 'active', 'Onchain', null),
+  ((select id from public.projects where slug = 'questora'), 'Complete a Base transaction', 'Complete a simple onchain action on Base and submit transaction proof.', 'https://bridge.base.org/', 'Complete the requested Base action and paste a transaction link or hash.', 'wallet', 'Transaction hash or Base explorer URL', '0x1234... or https://basescan.org/tx/...', 'onchain', 'medium', 300, 100, 'active', 'Onchain', null),
   ((select id from public.projects where slug = 'builder-guild'), 'Share your Base build idea', 'Post a short build idea and tag the community so members can discover it.', 'https://x.com/', 'Post your idea on X, tag the project, then submit the tweet URL.', 'tweet', 'https://x.com/yourname/status/...', 'https://x.com/base/status/123', 'post_x', 'hard', 175, 45, 'active', 'Social', null),
   ((select id from public.projects where slug = 'builder-guild'), 'Complete the gas primer', 'Read a short primer on L2 gas fees and mark the task complete when finished.', null, 'Read the primer and write one sentence about what you learned.', 'text', 'One sentence summary', 'Base fees are lower because execution is batched on L2.', 'learn', 'medium', 100, 30, 'active', 'Learning', null)
 on conflict do nothing;

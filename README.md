@@ -64,6 +64,8 @@ If the database already exists, also run [supabase/quest-deadlines.sql](</D:/DEV
 
 Run [supabase/retweet-quest-type.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/retweet-quest-type.sql>) if your database was created before the Retweet X quest type was added.
 
+Run [supabase/project-curation.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/project-curation.sql>) to add verified project and top campaign controls.
+
 Before going live, run [supabase/pre-live-audit.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/pre-live-audit.sql>) to check platform admins, pending submissions, active quests without deadlines, and anon write policies that should be reviewed.
 
 The schema creates:
@@ -93,6 +95,7 @@ Core behavior:
 - XP is calculated from approved `user_quests` joined to `quests`.
 - The leaderboard reads the `leaderboard` view sorted by computed XP.
 - Studio can export qualified users as CSV based on approved quest count and project XP.
+- Platform admins can manually mark projects as verified and feature up to five top campaign slots.
 
 The MVP uses permissive anon RLS policies so wallet-based flows work without a custom auth server. For production, replace the write policies with wallet/session-aware server actions or Supabase auth checks.
 
@@ -133,7 +136,7 @@ user_badges(id, user_id, badge_id, awarded_at)
 
 ## Production Checklist
 
-1. Run all Supabase SQL files in this order: `schema.sql`, `xp-guardrails.sql`, `quest-deadlines.sql`, `retweet-quest-type.sql`.
+1. Run all Supabase SQL files in this order: `schema.sql`, `xp-guardrails.sql`, `quest-deadlines.sql`, `retweet-quest-type.sql`, `project-curation.sql`.
 2. Add your platform admin wallet to `platform_admins` and `NEXT_PUBLIC_PLATFORM_ADMIN_WALLETS`.
 3. Run `pre-live-audit.sql` and review any anon write policies before opening the app publicly.
 4. Set production env vars in your host:
