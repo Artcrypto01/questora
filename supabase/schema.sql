@@ -120,9 +120,18 @@ create table if not exists public.quests (
   status text not null default 'active' check (status in ('active', 'draft', 'archived')),
   category text not null default 'Community',
   ends_at timestamptz,
-  created_at timestamptz not null default now(),
-  unique (project_id, title)
+  created_at timestamptz not null default now()
 );
+
+alter table public.quests drop constraint if exists quests_project_id_title_key;
+drop index if exists public.quests_project_campaign_title_unique_idx;
+drop index if exists public.quests_project_uncampaigned_title_unique_idx;
+create unique index if not exists quests_project_campaign_title_unique_idx
+  on public.quests (project_id, campaign_id, lower(trim(title)))
+  where campaign_id is not null;
+create unique index if not exists quests_project_uncampaigned_title_unique_idx
+  on public.quests (project_id, lower(trim(title)))
+  where campaign_id is null;
 
 create table if not exists public.user_quests (
   id uuid primary key default gen_random_uuid(),
@@ -215,6 +224,21 @@ create table if not exists public.user_badges (
   unique (user_id, badge_id)
 );
 
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  recipient_wallet_address text not null,
+  type text not null check (type in ('submission_created', 'submission_approved', 'submission_rejected', 'project_approved', 'project_rejected')),
+  title text not null,
+  body text not null,
+  href text,
+  read_at timestamptz,
+  created_at timestamptz not null default now(),
+  constraint notifications_recipient_wallet_lowercase check (recipient_wallet_address = lower(recipient_wallet_address))
+);
+
+create index if not exists notifications_recipient_created_idx on public.notifications (recipient_wallet_address, created_at desc);
+create index if not exists notifications_recipient_unread_idx on public.notifications (recipient_wallet_address, read_at) where read_at is null;
+
 drop view if exists public.leaderboard;
 create view public.leaderboard as
 select
@@ -242,6 +266,7 @@ alter table public.quests enable row level security;
 alter table public.user_quests enable row level security;
 alter table public.badges enable row level security;
 alter table public.user_badges enable row level security;
+alter table public.notifications enable row level security;
 
 drop policy if exists "Projects are readable" on public.projects;
 create policy "Projects are readable" on public.projects
@@ -331,6 +356,18 @@ create policy "User badges are readable" on public.user_badges
 drop policy if exists "User badges can be awarded for MVP" on public.user_badges;
 create policy "User badges can be awarded for MVP" on public.user_badges
   for insert with check (true);
+
+drop policy if exists "Notifications are readable for MVP" on public.notifications;
+create policy "Notifications are readable for MVP" on public.notifications
+  for select using (true);
+
+drop policy if exists "Notifications can be created for MVP" on public.notifications;
+create policy "Notifications can be created for MVP" on public.notifications
+  for insert with check (recipient_wallet_address = lower(recipient_wallet_address));
+
+drop policy if exists "Notifications can be updated for MVP" on public.notifications;
+create policy "Notifications can be updated for MVP" on public.notifications
+  for update using (true) with check (recipient_wallet_address = lower(recipient_wallet_address));
 
 insert into public.projects (name, slug, description, project_type, status, is_verified, is_featured, featured_rank)
 values

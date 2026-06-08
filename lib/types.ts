@@ -189,3 +189,16 @@ export type Campaign = {
 };
 
 export type CampaignInput = Pick<Campaign, "project_id" | "slug" | "name" | "description" | "purpose" | "starts_at" | "ends_at" | "status">;
+
+export type NotificationType = "submission_created" | "submission_approved" | "submission_rejected" | "project_approved" | "project_rejected";
+
+export type Notification = {
+  id: string;
+  recipient_wallet_address: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  href: string | null;
+  read_at: string | null;
+  created_at: string;
+};

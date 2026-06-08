@@ -269,6 +269,14 @@ export default function AdminPage() {
       }),
     [managedQuests, questListFilter]
   );
+
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (studioTabs.some((item) => item.id === tab)) {
+      setActiveStudioTab(tab as StudioTab);
+    }
+  }, []);
+
   const canAdvanceQuestStep =
     questStep === 0
       ? Boolean(form.project_id && canCreateQuest)

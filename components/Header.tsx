@@ -2,8 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { Bell } from "lucide-react";
+import { useAccount } from "wagmi";
 import { clsx } from "clsx";
+import { getUnreadNotificationCount } from "@/lib/quest-service";
 
 const navItems = [
   { href: "/dashboard", label: "Quests" },
@@ -14,6 +18,29 @@ const navItems = [
 
 export function Header() {
   const pathname = usePathname();
+  const { address } = useAccount();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadUnreadCount() {
+      if (!address) {
+        setUnreadCount(0);
+        return;
+      }
+
+      const count = await getUnreadNotificationCount(address);
+      if (active) setUnreadCount(count);
+    }
+
+    loadUnreadCount();
+    const interval = window.setInterval(loadUnreadCount, 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [address, pathname]);
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/10 bg-[#061022]/88 backdrop-blur-xl">
@@ -42,7 +69,22 @@ export function Header() {
           ))}
         </nav>
 
-        <div className="shrink-0">
+        <div className="flex shrink-0 items-center gap-2">
+          <Link
+            href="/notifications"
+            className={clsx(
+              "focus-ring relative inline-flex h-11 w-11 items-center justify-center rounded-xl transition",
+              pathname === "/notifications" ? "bg-white text-base-blue" : "bg-white/10 text-blue-100 hover:bg-white/15 hover:text-white"
+            )}
+            aria-label="Notifications"
+          >
+            <Bell size={19} />
+            {unreadCount > 0 ? (
+              <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-cyan-200 px-1.5 py-0.5 text-center text-[10px] font-black text-slate-950">
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            ) : null}
+          </Link>
           <ConnectButton chainStatus="icon" accountStatus={{ smallScreen: "avatar", largeScreen: "full" }} showBalance={false} />
         </div>
       </div>

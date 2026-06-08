@@ -1,6 +1,6 @@
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import { seedCompletions, seedProjects, seedQuests, seedUsers } from "@/lib/seed-data";
-import type { AdminContext, Campaign, CampaignInput, LeaderboardRank, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
+import type { AdminContext, Campaign, CampaignInput, LeaderboardRank, Notification, NotificationType, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
 import { getImageUrl, isQuestEnded, normalizeWallet, normalizeXUsername } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp } from "@/lib/xp-policy";
 
@@ -10,6 +10,7 @@ let localUsers = [...seedUsers];
 let localCompletions = [...seedCompletions];
 let localProjectMembers: ProjectMember[] = [];
 let localCampaigns: Campaign[] = [];
+let localNotifications: Notification[] = [];
 
 function assertSupabase() {
   if (!supabase) {
@@ -121,7 +122,7 @@ function formatDatabaseError(error: unknown, fallback = "Something went wrong.")
   const details = maybeError.details ?? "";
 
   if (maybeError.code === "23505" || message.toLowerCase().includes("duplicate key")) {
-    return "A quest with this title already exists in this project. Use a different title.";
+    return "A quest with this title already exists in this campaign. Use a different title, or select another campaign.";
   }
 
   if (
@@ -161,6 +162,91 @@ function normalizeSubmissionStatus<T extends UserQuest>(submission: T): T {
   }
 
   return submission;
+}
+
+async function createNotification(input: {
+  recipient_wallet_address?: string | null;
+  type: NotificationType;
+  title: string;
+  body: string;
+  href?: string | null;
+}) {
+  if (!input.recipient_wallet_address) return;
+
+  const notification = {
+    recipient_wallet_address: normalizeWallet(input.recipient_wallet_address),
+    type: input.type,
+    title: input.title,
+    body: input.body,
+    href: input.href ?? null,
+    read_at: null
+  };
+
+  if (!hasSupabaseConfig) {
+    localNotifications = [
+      {
+        id: crypto.randomUUID(),
+        ...notification,
+        created_at: new Date().toISOString()
+      },
+      ...localNotifications
+    ];
+    return;
+  }
+
+  const { error } = await assertSupabase().from("notifications").insert(notification);
+  if (error) {
+    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+    if (message.includes("notifications") || error.code === "42P01") {
+      console.warn("Notifications table is not ready yet.", error);
+      return;
+    }
+
+    throw new Error(formatDatabaseError(error, "Failed to create notification."));
+  }
+}
+
+async function createNotifications(
+  recipients: Array<string | null | undefined>,
+  input: Omit<Parameters<typeof createNotification>[0], "recipient_wallet_address">
+) {
+  const uniqueRecipients = Array.from(new Set(recipients.filter(Boolean).map((wallet) => normalizeWallet(wallet as string))));
+  await Promise.all(uniqueRecipients.map((wallet) => createNotification({ ...input, recipient_wallet_address: wallet })));
+}
+
+async function getProjectNotificationRecipients(projectId?: string | null) {
+  if (!projectId) return [];
+
+  if (!hasSupabaseConfig) {
+    const project = localProjects.find((item) => item.id === projectId);
+    const memberWallets = localProjectMembers.filter((member) => member.project_id === projectId).map((member) => member.wallet_address);
+    return [project?.owner_wallet_address, ...memberWallets].filter(Boolean) as string[];
+  }
+
+  const client = assertSupabase();
+  const [{ data: project, error: projectError }, { data: members, error: memberError }] = await Promise.all([
+    client.from("projects").select("owner_wallet_address").eq("id", projectId).maybeSingle(),
+    client.from("project_members").select("wallet_address").eq("project_id", projectId)
+  ]);
+
+  if (projectError) throw projectError;
+  if (memberError) throw memberError;
+
+  return [project?.owner_wallet_address, ...(members ?? []).map((member) => member.wallet_address)].filter(Boolean) as string[];
+}
+
+async function notifyProjectSubmission(user: UserProfile, quest: Quest) {
+  const recipients = await getProjectNotificationRecipients(quest.project_id);
+  await createNotifications(recipients, {
+    type: "submission_created",
+    title: "New quest submission",
+    body: `${user.display_name || shortWallet(user.wallet_address)} submitted "${quest.title}".`,
+    href: "/admin?tab=submissions"
+  });
+}
+
+function shortWallet(walletAddress: string) {
+  return `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
 }
 
 function readJoinedObject<T>(value: T | T[] | null | undefined): T | null {
@@ -666,12 +752,32 @@ export async function reviewProject(projectId: string, status: "active" | "archi
   }
 
   if (!hasSupabaseConfig) {
+    const project = localProjects.find((item) => item.id === projectId);
     localProjects = localProjects.map((project) => (project.id === projectId ? { ...project, status } : project));
+    await createNotification({
+      recipient_wallet_address: project?.owner_wallet_address,
+      type: status === "active" ? "project_approved" : "project_rejected",
+      title: status === "active" ? "Project approved" : "Project rejected",
+      body: status === "active" ? `Your project "${project?.name ?? "project"}" is now live.` : `Your project "${project?.name ?? "project"}" was rejected by Questora review.`,
+      href: "/admin?tab=projects"
+    });
     return;
   }
 
-  const { error } = await assertSupabase().from("projects").update({ status }).eq("id", projectId);
+  const client = assertSupabase();
+  const { data: project, error: lookupError } = await client.from("projects").select("name, owner_wallet_address").eq("id", projectId).maybeSingle();
+  if (lookupError) throw lookupError;
+
+  const { error } = await client.from("projects").update({ status }).eq("id", projectId);
   if (error) throw error;
+
+  await createNotification({
+    recipient_wallet_address: project?.owner_wallet_address,
+    type: status === "active" ? "project_approved" : "project_rejected",
+    title: status === "active" ? "Project approved" : "Project rejected",
+    body: status === "active" ? `Your project "${project?.name ?? "project"}" is now live.` : `Your project "${project?.name ?? "project"}" was rejected by Questora review.`,
+    href: "/admin?tab=projects"
+  });
 }
 
 export async function createQuest(input: QuestInput, actorWalletAddress?: string | null): Promise<Quest> {
@@ -936,6 +1042,97 @@ export async function getUserCompletions(userId: string): Promise<UserQuest[]> {
     }));
 }
 
+export async function getNotifications(walletAddress?: string | null): Promise<Notification[]> {
+  if (!walletAddress) return [];
+  const wallet = normalizeWallet(walletAddress);
+
+  if (!hasSupabaseConfig) {
+    return localNotifications
+      .filter((notification) => notification.recipient_wallet_address === wallet)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("notifications")
+    .select("*")
+    .eq("recipient_wallet_address", wallet)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (error) {
+    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+    if (message.includes("notifications") || error.code === "42P01") return [];
+    throw error;
+  }
+
+  return (data ?? []) as Notification[];
+}
+
+export async function getUnreadNotificationCount(walletAddress?: string | null): Promise<number> {
+  if (!walletAddress) return 0;
+  const wallet = normalizeWallet(walletAddress);
+
+  if (!hasSupabaseConfig) {
+    return localNotifications.filter((notification) => notification.recipient_wallet_address === wallet && !notification.read_at).length;
+  }
+
+  const { count, error } = await assertSupabase()
+    .from("notifications")
+    .select("id", { count: "exact", head: true })
+    .eq("recipient_wallet_address", wallet)
+    .is("read_at", null);
+
+  if (error) {
+    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+    if (message.includes("notifications") || error.code === "42P01") return 0;
+    throw error;
+  }
+
+  return count ?? 0;
+}
+
+export async function markNotificationRead(notificationId: string, walletAddress?: string | null) {
+  if (!walletAddress) return;
+  const wallet = normalizeWallet(walletAddress);
+  const readAt = new Date().toISOString();
+
+  if (!hasSupabaseConfig) {
+    localNotifications = localNotifications.map((notification) =>
+      notification.id === notificationId && notification.recipient_wallet_address === wallet ? { ...notification, read_at: notification.read_at ?? readAt } : notification
+    );
+    return;
+  }
+
+  const { error } = await assertSupabase()
+    .from("notifications")
+    .update({ read_at: readAt })
+    .eq("id", notificationId)
+    .eq("recipient_wallet_address", wallet);
+
+  if (error) throw error;
+}
+
+export async function markAllNotificationsRead(walletAddress?: string | null) {
+  if (!walletAddress) return;
+  const wallet = normalizeWallet(walletAddress);
+  const readAt = new Date().toISOString();
+
+  if (!hasSupabaseConfig) {
+    localNotifications = localNotifications.map((notification) =>
+      notification.recipient_wallet_address === wallet && !notification.read_at ? { ...notification, read_at: readAt } : notification
+    );
+    return;
+  }
+
+  const { error } = await assertSupabase()
+    .from("notifications")
+    .update({ read_at: readAt })
+    .eq("recipient_wallet_address", wallet)
+    .is("read_at", null);
+
+  if (error) throw error;
+}
+
 export async function completeQuest(walletAddress: string, quest: Quest, proof: QuestSubmissionInput): Promise<UserProfile> {
   if (isQuestEnded(quest.ends_at)) {
     throw new Error("This quest has ended and no longer accepts submissions.");
@@ -963,6 +1160,7 @@ export async function completeQuest(walletAddress: string, quest: Quest, proof: 
             }
           : completion
       );
+      await notifyProjectSubmission(user, quest);
       return hydrateUserXp(localUsers.find((item) => item.id === user.id) as UserProfile);
     }
 
@@ -981,6 +1179,7 @@ export async function completeQuest(walletAddress: string, quest: Quest, proof: 
       ...localCompletions
     ];
 
+    await notifyProjectSubmission(user, quest);
     return hydrateUserXp(localUsers.find((item) => item.id === user.id) as UserProfile);
   }
 
@@ -998,6 +1197,7 @@ export async function completeQuest(walletAddress: string, quest: Quest, proof: 
       .eq("id", existingCompletion.id);
 
     if (updateError) throw updateError;
+    await notifyProjectSubmission(user, quest);
     return getOrCreateUser(walletAddress);
   }
 
@@ -1014,6 +1214,7 @@ export async function completeQuest(walletAddress: string, quest: Quest, proof: 
 
   if (completionError) throw completionError;
 
+  await notifyProjectSubmission(user, quest);
   return getOrCreateUser(walletAddress);
 }
 
@@ -1127,6 +1328,7 @@ export async function reviewQuestSubmission(submissionId: string, status: "appro
   if (!hasSupabaseConfig) {
     const submission = localCompletions.find((item) => item.id === submissionId);
     const quest = localQuests.find((item) => item.id === submission?.quest_id);
+    const user = localUsers.find((item) => item.id === submission?.user_id);
     if (!context.project_ids.includes(quest?.project_id ?? "")) {
       throw new Error("You do not have permission to review this submission.");
     }
@@ -1134,20 +1336,35 @@ export async function reviewQuestSubmission(submissionId: string, status: "appro
     localCompletions = localCompletions.map((submission) =>
       submission.id === submissionId ? { ...submission, status, review_note: status === "rejected" ? reviewNote : null, reviewed_at: new Date().toISOString() } : submission
     );
+    await createNotification({
+      recipient_wallet_address: user?.wallet_address,
+      type: status === "approved" ? "submission_approved" : "submission_rejected",
+      title: status === "approved" ? "Quest approved" : "Quest rejected",
+      body: status === "approved" ? `Your "${quest?.title ?? "quest"}" submission was approved.` : `Your "${quest?.title ?? "quest"}" submission was rejected.`,
+      href: "/profile"
+    });
     return;
   }
 
   const client = assertSupabase();
   const { data: submission, error: lookupError } = await client
     .from("user_quests")
-    .select("id, quests(project_id)")
+    .select("id, user_id, quest_id")
     .eq("id", submissionId)
     .single();
 
   if (lookupError) throw lookupError;
 
-  const questJoin = submission.quests as { project_id?: string | null } | Array<{ project_id?: string | null }> | null;
-  const projectId = Array.isArray(questJoin) ? questJoin[0]?.project_id : questJoin?.project_id;
+  const [{ data: quest, error: questError }, { data: user, error: userError }] = await Promise.all([
+    client.from("quests").select("project_id, title").eq("id", submission.quest_id).single(),
+    client.from("users").select("wallet_address").eq("id", submission.user_id).single()
+  ]);
+
+  if (questError) throw questError;
+  if (userError) throw userError;
+
+  const projectId = quest.project_id;
+  const questTitle = quest.title;
   if (!context.project_ids.includes(projectId ?? "")) {
     throw new Error("You do not have permission to review this submission.");
   }
@@ -1158,6 +1375,14 @@ export async function reviewQuestSubmission(submissionId: string, status: "appro
     .eq("id", submissionId);
 
   if (error) throw error;
+
+  await createNotification({
+    recipient_wallet_address: user.wallet_address,
+    type: status === "approved" ? "submission_approved" : "submission_rejected",
+    title: status === "approved" ? "Quest approved" : "Quest rejected",
+    body: status === "approved" ? `Your "${questTitle ?? "quest"}" submission was approved.` : `Your "${questTitle ?? "quest"}" submission was rejected.`,
+    href: "/profile"
+  });
 }
 
 export async function getLeaderboard(limit = 50): Promise<UserProfile[]> {
