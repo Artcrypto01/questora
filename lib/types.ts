@@ -41,7 +41,13 @@ export type UserProfile = {
   discord_username: string | null;
   bio: string | null;
   total_xp: number;
+  completed_quests?: number;
   created_at?: string;
+};
+
+export type LeaderboardRank = {
+  rank: number;
+  user: UserProfile;
 };
 
 export type UserProfileInput = Pick<UserProfile, "display_name" | "avatar_url" | "x_username" | "discord_username" | "bio">;

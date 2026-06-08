@@ -1,6 +1,6 @@
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import { seedCompletions, seedProjects, seedQuests, seedUsers } from "@/lib/seed-data";
-import type { AdminContext, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
+import type { AdminContext, LeaderboardRank, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
 import { getImageUrl, isQuestEnded, normalizeWallet } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp } from "@/lib/xp-policy";
 
@@ -980,15 +980,45 @@ export async function reviewQuestSubmission(submissionId: string, status: "appro
   if (error) throw error;
 }
 
-export async function getLeaderboard(): Promise<UserProfile[]> {
+export async function getLeaderboard(limit = 50): Promise<UserProfile[]> {
   if (!hasSupabaseConfig) {
     const users = await Promise.all(localUsers.map((user) => hydrateUserXp(user)));
-    return users.sort((a, b) => b.total_xp - a.total_xp);
+    return users.sort((a, b) => b.total_xp - a.total_xp).slice(0, limit);
   }
 
-  const { data, error } = await assertSupabase().from("leaderboard").select("*").order("total_xp", { ascending: false }).limit(100);
+  const { data, error } = await assertSupabase().from("leaderboard").select("*").order("total_xp", { ascending: false }).limit(limit);
   if (error) throw error;
   return data ?? [];
+}
+
+export async function getUserLeaderboardRank(walletAddress?: string | null): Promise<LeaderboardRank | null> {
+  if (!walletAddress) return null;
+  const wallet = normalizeWallet(walletAddress);
+
+  if (!hasSupabaseConfig) {
+    const users = (await Promise.all(localUsers.map((user) => hydrateUserXp(user)))).sort((a, b) => b.total_xp - a.total_xp);
+    const index = users.findIndex((user) => user.wallet_address === wallet);
+    if (index === -1) return null;
+    return {
+      rank: index + 1,
+      user: users[index]
+    };
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("leaderboard")
+    .select("*")
+    .order("total_xp", { ascending: false });
+
+  if (error) throw error;
+  const users = (data ?? []) as UserProfile[];
+  const index = users.findIndex((user) => user.wallet_address === wallet);
+  if (index === -1) return null;
+
+  return {
+    rank: index + 1,
+    user: users[index]
+  };
 }
 
 export async function getProjectLeaderboard(projectId: string): Promise<UserProfile[]> {
