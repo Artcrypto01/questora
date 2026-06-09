@@ -100,6 +100,8 @@ function DashboardContent() {
 
     return quests.filter((quest) => {
       const project = projects.find((item) => item.id === quest.project_id);
+      const submission = submissions.get(quest.id);
+      const isCompleted = submission?.status === "approved" && Boolean(submission.reviewed_at);
       const matchesProjectFilters = visibleProjectIds.has(quest.project_id ?? "");
       const matchesCampaign = !campaignFilter || quest.campaign_id === campaignFilter;
       const matchesSearch =
@@ -110,11 +112,13 @@ function DashboardContent() {
         project?.name.toLowerCase().includes(query) ||
         project?.project_type.toLowerCase().includes(query);
 
-      return matchesProjectFilters && matchesCampaign && matchesSearch;
+      return !isCompleted && matchesProjectFilters && matchesCampaign && matchesSearch;
     }).sort((a, b) => (projectOrder.get(a.project_id ?? "") ?? 9999) - (projectOrder.get(b.project_id ?? "") ?? 9999));
-  }, [campaignFilter, filteredProjects, projects, quests, searchQuery]);
+  }, [campaignFilter, filteredProjects, projects, quests, searchQuery, submissions]);
 
   const earnedXp = user?.total_xp ?? 0;
+  const approvedSubmissionCount = Array.from(submissions.values()).filter((item) => item.status === "approved" && item.reviewed_at).length;
+  const inReviewCount = Array.from(submissions.values()).filter((item) => item.status === "submitted").length;
 
   async function handleComplete(quest: Quest, proof: { proof_text: string; proof_url: string }) {
     if (!address) return;
@@ -146,8 +150,8 @@ function DashboardContent() {
 
       <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
         <StatCard icon={Sparkles} label="Global XP" value={earnedXp.toLocaleString()} />
-        <StatCard icon={CheckCircle2} label="Approved" value={`${Array.from(submissions.values()).filter((item) => item.status === "approved" && item.reviewed_at).length}/${quests.length}`} />
-        <StatCard icon={Badge} label="In review" value={Array.from(submissions.values()).filter((item) => item.status === "submitted").length.toString()} />
+        <StatCard icon={CheckCircle2} label="Approved" value={`${approvedSubmissionCount}/${quests.length}`} />
+        <StatCard icon={Badge} label="In review" value={inReviewCount.toString()} />
       </div>
 
       {events.length > 0 ? (
@@ -304,7 +308,7 @@ function DashboardContent() {
           ))}
           {visibleQuests.length === 0 ? (
             <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 text-blue-100 lg:col-span-2">
-              No quests found for this search.
+              {approvedSubmissionCount > 0 ? "All available quests are completed or no quests match this filter." : "No quests found for this search."}
             </div>
           ) : null}
         </div>
