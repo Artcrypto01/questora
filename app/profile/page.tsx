@@ -123,6 +123,7 @@ export default function ProfilePage() {
                 className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
                 placeholder="https://..."
               />
+              <span className="text-xs font-semibold text-cyan-200">Works best with direct image links like https://i.imgur.com/id.png</span>
             </label>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <label className="grid gap-2">
