@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useAccount } from "wagmi";
 import { Badge, CalendarDays, CheckCircle2, Gift, ListFilter, Loader2, Search, ShieldCheck, Sparkles, Star } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
@@ -18,6 +19,15 @@ function isProjectFeaturedActive(project: Project) {
 }
 
 export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-7xl px-4 py-8 text-blue-100 sm:px-6 lg:px-8">Loading quests...</div>}>
+      <DashboardContent />
+    </Suspense>
+  );
+}
+
+function DashboardContent() {
+  const searchParams = useSearchParams();
   const { address, isConnected } = useAccount();
   const [projects, setProjects] = useState<Project[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
@@ -30,6 +40,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [busyQuest, setBusyQuest] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const campaignFilter = searchParams.get("campaign");
+  const projectFilter = searchParams.get("project");
 
   useEffect(() => {
     let active = true;
@@ -51,6 +63,9 @@ export default function DashboardPage() {
         setQuests(questRows);
         setUser(userRow);
         setSubmissions(new Map(completions.map((item) => [item.quest_id, item])));
+        if (projectFilter) {
+          setProjectId(projectFilter);
+        }
         setLoading(false);
       }
     }
@@ -59,7 +74,7 @@ export default function DashboardPage() {
     return () => {
       active = false;
     };
-  }, [address]);
+  }, [address, projectFilter]);
 
   const filteredProjects = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -86,6 +101,7 @@ export default function DashboardPage() {
     return quests.filter((quest) => {
       const project = projects.find((item) => item.id === quest.project_id);
       const matchesProjectFilters = visibleProjectIds.has(quest.project_id ?? "");
+      const matchesCampaign = !campaignFilter || quest.campaign_id === campaignFilter;
       const matchesSearch =
         !query ||
         quest.title.toLowerCase().includes(query) ||
@@ -94,9 +110,9 @@ export default function DashboardPage() {
         project?.name.toLowerCase().includes(query) ||
         project?.project_type.toLowerCase().includes(query);
 
-      return matchesProjectFilters && matchesSearch;
+      return matchesProjectFilters && matchesCampaign && matchesSearch;
     }).sort((a, b) => (projectOrder.get(a.project_id ?? "") ?? 9999) - (projectOrder.get(b.project_id ?? "") ?? 9999));
-  }, [filteredProjects, projects, quests, searchQuery]);
+  }, [campaignFilter, filteredProjects, projects, quests, searchQuery]);
 
   const earnedXp = user?.total_xp ?? 0;
 
@@ -257,6 +273,18 @@ export default function DashboardPage() {
           ))}
         </div>
       </div>
+
+      {campaignFilter ? (
+        <div className="mt-4 flex flex-col justify-between gap-3 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4 sm:flex-row sm:items-center">
+          <div>
+            <p className="text-sm font-black uppercase tracking-wider text-cyan-200">Event quest filter</p>
+            <p className="mt-1 text-sm font-semibold text-blue-100">Showing quests from the selected event campaign.</p>
+          </div>
+          <Link href="/dashboard" className="focus-ring inline-flex justify-center rounded-lg bg-white px-4 py-2 text-sm font-black text-base-blue">
+            Clear filter
+          </Link>
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="mt-14 flex justify-center text-base-blue">

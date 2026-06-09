@@ -78,7 +78,7 @@ export default function EventDetailPage() {
               <p className="mt-2 max-w-3xl leading-7 text-blue-100">{event.description || "Compete in approved quests, climb the event leaderboard, and qualify for rewards."}</p>
             </div>
           </div>
-          <Link href="/dashboard" className="focus-ring inline-flex items-center justify-center rounded-lg bg-white px-5 py-3 font-black text-base-blue">
+          <Link href={`/dashboard?project=${encodeURIComponent(event.project_id)}&campaign=${encodeURIComponent(event.campaign_id)}`} className="focus-ring inline-flex items-center justify-center rounded-lg bg-white px-5 py-3 font-black text-base-blue">
             Start quests
           </Link>
         </div>
@@ -150,15 +150,22 @@ export default function EventDetailPage() {
             <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 text-blue-100 md:col-span-2">No quests are attached to this event campaign yet.</div>
           ) : (
             quests.map((quest) => (
-              <article key={quest.id} className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5">
+              <Link
+                key={quest.id}
+                href={`/dashboard?project=${encodeURIComponent(event.project_id)}&campaign=${encodeURIComponent(event.campaign_id)}`}
+                className="focus-ring rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 transition hover:-translate-y-0.5 hover:border-cyan-200/60"
+              >
                 <div className="flex flex-wrap gap-2">
                   <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-950">{quest.category}</span>
                   {quest.ends_at ? <span className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wider ${isQuestEnded(quest.ends_at) ? "bg-rose-400 text-slate-950" : "bg-white/10 text-blue-100"}`}>{isQuestEnded(quest.ends_at) ? "Ended" : `Ends ${formatQuestDeadline(quest.ends_at)}`}</span> : null}
                 </div>
                 <h3 className="mt-4 text-xl font-black text-white">{quest.title}</h3>
                 <p className="mt-3 leading-7 text-blue-100">{quest.description}</p>
-                <p className="mt-5 font-black text-cyan-200">{quest.xp_reward.toLocaleString()} event XP</p>
-              </article>
+                <div className="mt-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                  <p className="font-black text-cyan-200">{quest.xp_reward.toLocaleString()} event XP</p>
+                  <span className="inline-flex justify-center rounded-lg bg-white px-4 py-2 text-sm font-black text-base-blue">Start quest</span>
+                </div>
+              </Link>
             ))
           )}
         </div>
