@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
-import { Archive, ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Download, FolderPlus, Gift, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Download, ExternalLink, FolderPlus, Gift, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
 import { createCampaign, createEvent, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableProjects, getManageableQuests, getQualifiedUsers, getQuestSubmissions, reviewProject, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
 import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventRewardType, Project, ProjectInput, ProjectType, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, fromDatetimeLocalValue, isQuestEnded, toDatetimeLocalValue } from "@/lib/utils";
@@ -238,6 +238,17 @@ const initialProjectForm: ProjectInput = {
   x_url: "",
   status: "active"
 };
+
+function getProjectReviewLinks(project: Project) {
+  return [
+    { label: "Website", url: project.website_url },
+    { label: "X", url: project.x_url },
+    { label: "Discord", url: project.discord_url },
+    { label: "Telegram", url: project.telegram_url },
+    { label: "Logo", url: project.logo_url },
+    { label: "Cover", url: project.cover_image_url }
+  ].filter((link): link is { label: string; url: string } => Boolean(link.url));
+}
 
 export default function AdminPage() {
   const { address, isConnected } = useAccount();
@@ -1811,6 +1822,27 @@ export default function AdminPage() {
                         <h3 className="mt-3 font-black text-white">{project.name}</h3>
                         <p className="mt-1 text-sm text-blue-100">{project.description || "No description"}</p>
                         <p className="mt-2 break-all text-xs text-blue-200">Owner: {project.owner_wallet_address}</p>
+                        <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.06] p-3">
+                          <p className="text-xs font-black uppercase tracking-wider text-cyan-200">Review links</p>
+                          {getProjectReviewLinks(project).length > 0 ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {getProjectReviewLinks(project).map((link) => (
+                                <a
+                                  key={`${project.id}-${link.label}`}
+                                  href={link.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="focus-ring inline-flex max-w-full items-center gap-1 rounded-lg bg-white px-3 py-2 text-xs font-black text-base-blue transition hover:bg-cyan-100"
+                                >
+                                  <span className="truncate">{link.label}</span>
+                                  <ExternalLink size={13} className="shrink-0" />
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="mt-2 text-sm font-semibold text-blue-100">No website or social links submitted.</p>
+                          )}
+                        </div>
                       </div>
                       <div className="flex gap-2">
                         <button
