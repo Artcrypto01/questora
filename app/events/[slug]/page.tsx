@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Award, BadgeCheck, CalendarDays, Gift, Trophy, UserRound, UsersRound } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
-import { getEventBySlug, getEventLeaderboard, getEventStats, getQuestsByProject } from "@/lib/quest-service";
-import type { Event, EventStats, Quest, UserProfile } from "@/lib/types";
+import { getCampaignPartners, getEventBySlug, getEventLeaderboard, getEventStats, getQuestsByCampaign } from "@/lib/quest-service";
+import type { CampaignPartnerProject, Event, EventStats, Quest, UserProfile } from "@/lib/types";
 import { formatQuestDeadline, isQuestEnded, shortAddress } from "@/lib/utils";
 
 const rewardTypeLabels = {
@@ -22,6 +22,7 @@ export default function EventDetailPage() {
   const [stats, setStats] = useState<EventStats | null>(null);
   const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
   const [quests, setQuests] = useState<Quest[]>([]);
+  const [partners, setPartners] = useState<CampaignPartnerProject[]>([]);
 
   useEffect(() => {
     async function load() {
@@ -29,14 +30,16 @@ export default function EventDetailPage() {
       setEvent(eventRow);
       if (!eventRow) return;
 
-      const [statRow, leaderboardRows, projectQuests] = await Promise.all([
+      const [statRow, leaderboardRows, campaignQuests, partnerRows] = await Promise.all([
         getEventStats(eventRow.id),
         getEventLeaderboard(eventRow.id, 50),
-        getQuestsByProject(eventRow.project_id)
+        getQuestsByCampaign(eventRow.campaign_id),
+        getCampaignPartners(eventRow.campaign_id)
       ]);
       setStats(statRow);
       setLeaderboard(leaderboardRows);
-      setQuests(projectQuests.filter((quest) => quest.campaign_id === eventRow.campaign_id));
+      setQuests(campaignQuests);
+      setPartners(partnerRows);
     }
 
     load();
@@ -62,6 +65,7 @@ export default function EventDetailPage() {
           <div className="absolute bottom-6 left-6 right-6">
             <div className="flex flex-wrap gap-2">
               <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">{ended ? "Ended" : "Live event"}</span>
+              {partners.length > 0 ? <span className="rounded-full bg-amber-300 px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">Collab campaign</span> : null}
               <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-wider text-white">{rewardTypeLabels[event.reward_type]}</span>
               {event.campaign_name ? <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-wider text-white">{event.campaign_name}</span> : null}
             </div>
@@ -76,9 +80,24 @@ export default function EventDetailPage() {
             <div>
               <p className="text-sm font-black uppercase tracking-wider text-cyan-200">{event.project_name ?? "Project event"}</p>
               <p className="mt-2 max-w-3xl leading-7 text-blue-100">{event.description || "Compete in approved quests, climb the event leaderboard, and qualify for rewards."}</p>
+              {partners.length > 0 ? (
+                <div className="mt-4">
+                  <p className="text-xs font-black uppercase tracking-wider text-blue-200">Co-hosted with</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {partners.map((partner) => (
+                      <span key={partner.id} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 py-1 pl-1 pr-3 text-xs font-black text-white">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white text-base-blue">
+                          <ProjectImage src={partner.logo_url} name={partner.name} variant="logo" />
+                        </span>
+                        {partner.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
-          <Link href={`/dashboard?project=${encodeURIComponent(event.project_id)}&campaign=${encodeURIComponent(event.campaign_id)}`} className="focus-ring inline-flex items-center justify-center rounded-lg bg-white px-5 py-3 font-black text-base-blue">
+          <Link href={`/dashboard?campaign=${encodeURIComponent(event.campaign_id)}`} className="focus-ring inline-flex items-center justify-center rounded-lg bg-white px-5 py-3 font-black text-base-blue">
             Start quests
           </Link>
         </div>
@@ -152,7 +171,7 @@ export default function EventDetailPage() {
             quests.map((quest) => (
               <Link
                 key={quest.id}
-                href={`/dashboard?project=${encodeURIComponent(event.project_id)}&campaign=${encodeURIComponent(event.campaign_id)}`}
+                href={`/dashboard?campaign=${encodeURIComponent(event.campaign_id)}`}
                 className="focus-ring rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 transition hover:-translate-y-0.5 hover:border-cyan-200/60"
               >
                 <div className="flex flex-wrap gap-2">

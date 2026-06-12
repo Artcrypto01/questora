@@ -3,7 +3,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
 import { Archive, ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Download, ExternalLink, FolderPlus, Gift, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
-import { createCampaign, createEvent, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableProjects, getManageableQuests, getQualifiedUsers, getQuestSubmissions, reviewProject, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
+import { ProjectImage } from "@/components/ProjectImage";
+import { addCampaignPartner, createCampaign, createEvent, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableProjects, getManageableQuests, getProjects, getQualifiedUsers, getQuestSubmissions, removeCampaignPartner, reviewCampaignPartner, reviewProject, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
 import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventRewardType, Project, ProjectInput, ProjectType, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, fromDatetimeLocalValue, isQuestEnded, toDatetimeLocalValue } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp, difficultyLabels, getQuestXpPolicy, questTypeLabels } from "@/lib/xp-policy";
@@ -250,10 +251,15 @@ function getProjectReviewLinks(project: Project) {
   ].filter((link): link is { label: string; url: string } => Boolean(link.url));
 }
 
+function canProjectUseCampaign(projectId: string | null | undefined, campaign: Campaign) {
+  return Boolean(projectId && (campaign.project_id === projectId || campaign.partner_project_ids?.includes(projectId)));
+}
+
 export default function AdminPage() {
   const { address, isConnected } = useAccount();
   const [adminContext, setAdminContext] = useState<AdminContext | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [activeProjects, setActiveProjects] = useState<Project[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [managedQuests, setManagedQuests] = useState<Quest[]>([]);
@@ -274,6 +280,7 @@ export default function AdminPage() {
   const [campaignPurpose, setCampaignPurpose] = useState(campaignPurposes[0]);
   const [activeStudioTab, setActiveStudioTab] = useState<StudioTab>("overview");
   const [questListFilter, setQuestListFilter] = useState<QuestListFilter>("active");
+  const [campaignPartnerProjectIds, setCampaignPartnerProjectIds] = useState<Record<string, string>>({});
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const selectedProject = projects.find((project) => project.id === form.project_id);
@@ -281,7 +288,7 @@ export default function AdminPage() {
   const selectedCampaignProject = projects.find((project) => project.id === campaignForm.project_id);
   const selectedEventProject = projects.find((project) => project.id === eventForm.project_id);
   const selectedEventCampaign = campaigns.find((campaign) => campaign.id === eventForm.campaign_id);
-  const projectCampaigns = campaigns.filter((campaign) => campaign.project_id === form.project_id && campaign.status !== "archived");
+  const projectCampaigns = campaigns.filter((campaign) => canProjectUseCampaign(form.project_id, campaign) && campaign.status !== "archived");
   const eventProjectCampaigns = campaigns.filter((campaign) => campaign.project_id === eventForm.project_id && campaign.status !== "archived");
   const canCreateQuest = Boolean(selectedProject && selectedProject.status === "active");
   const canCreateCampaign = Boolean(selectedCampaignProject && selectedCampaignProject.status === "active");
@@ -353,6 +360,7 @@ export default function AdminPage() {
     if (!address) {
       setAdminContext(null);
       setProjects([]);
+      setActiveProjects([]);
       setCampaigns([]);
       setEvents([]);
       setManagedQuests([]);
@@ -362,6 +370,7 @@ export default function AdminPage() {
     }
 
     getAdminContext(address).then(setAdminContext);
+    getProjects().then(setActiveProjects).catch(() => setActiveProjects([]));
     getManageableProjects(address).then((projectRows) => {
       setProjects(projectRows);
       setForm((current) => ({
@@ -487,6 +496,58 @@ export default function AdminPage() {
       setMessage("Campaign created. You can now assign quests to it.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to create campaign.");
+    }
+  }
+
+  async function handleAddCampaignPartner(campaign: Campaign) {
+    if (!address) {
+      setMessage("Connect the campaign owner wallet before adding partners.");
+      return;
+    }
+
+    const partnerProjectId = campaignPartnerProjectIds[campaign.id];
+    if (!partnerProjectId) {
+      setMessage("Select a partner project first.");
+      return;
+    }
+
+    try {
+      await addCampaignPartner(campaign.id, partnerProjectId, address);
+      setCampaigns(await getManageableCampaigns(address));
+      setCampaignPartnerProjectIds((current) => ({ ...current, [campaign.id]: "" }));
+      setMessage("Partner invite sent. The partner project owner must accept before they can add quests.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to add campaign partner.");
+    }
+  }
+
+  async function handleRemoveCampaignPartner(campaign: Campaign, partnerProjectId: string) {
+    if (!address) {
+      setMessage("Connect the campaign owner wallet before removing partners.");
+      return;
+    }
+
+    try {
+      await removeCampaignPartner(campaign.id, partnerProjectId, address);
+      setCampaigns(await getManageableCampaigns(address));
+      setMessage("Partner project removed from campaign.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to remove campaign partner.");
+    }
+  }
+
+  async function handleReviewCampaignPartner(campaign: Campaign, partnerProjectId: string, status: "active" | "archived") {
+    if (!address) {
+      setMessage("Connect the partner project owner wallet before reviewing this invite.");
+      return;
+    }
+
+    try {
+      await reviewCampaignPartner(campaign.id, partnerProjectId, status, address);
+      setCampaigns(await getManageableCampaigns(address));
+      setMessage(status === "active" ? "Collab invite accepted." : "Collab invite rejected.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to review campaign partner invite.");
     }
   }
 
@@ -1401,7 +1462,7 @@ export default function AdminPage() {
                     <option value="">No campaign</option>
                     {projectCampaigns.map((campaign) => (
                       <option key={campaign.id} value={campaign.id}>
-                        {campaign.name}
+                        {campaign.name}{campaign.project_id === form.project_id ? "" : " (collab)"}
                       </option>
                     ))}
                   </select>
@@ -2014,6 +2075,85 @@ export default function AdminPage() {
                           <span>/{campaign.slug}</span>
                           {campaign.starts_at ? <span>Starts {formatQuestDeadline(campaign.starts_at)}</span> : null}
                           {campaign.ends_at ? <span>Ends {formatQuestDeadline(campaign.ends_at)}</span> : null}
+                        </div>
+                        <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.06] p-3">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div>
+                              <p className="text-xs font-black uppercase tracking-wider text-cyan-200">Collab partners</p>
+                              {campaign.partner_projects && campaign.partner_projects.length > 0 ? (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                              {campaign.partner_projects.map((partner) => (
+                                <div key={partner.id} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 py-1 pl-1 pr-2 text-xs font-black text-white">
+                                  <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white text-base-blue">
+                                    <ProjectImage src={partner.logo_url} name={partner.name} variant="logo" />
+                                  </span>
+                                  <span>{partner.name}</span>
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${campaign.partner_statuses?.[partner.id] === "active" ? "bg-emerald-300 text-slate-950" : campaign.partner_statuses?.[partner.id] === "archived" ? "bg-rose-400 text-slate-950" : "bg-amber-300 text-slate-950"}`}>
+                                    {campaign.partner_statuses?.[partner.id] === "active" ? "Accepted" : campaign.partner_statuses?.[partner.id] === "archived" ? "Rejected" : "Pending"}
+                                  </span>
+                                  {campaign.partner_statuses?.[partner.id] === "draft" && adminContext?.project_ids.includes(partner.id) ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleReviewCampaignPartner(campaign, partner.id, "active")}
+                                        className="focus-ring rounded-full bg-emerald-300 px-2 py-0.5 text-[10px] font-black text-slate-950"
+                                      >
+                                        Accept
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleReviewCampaignPartner(campaign, partner.id, "archived")}
+                                        className="focus-ring rounded-full bg-rose-400 px-2 py-0.5 text-[10px] font-black text-slate-950"
+                                      >
+                                        Reject
+                                      </button>
+                                    </>
+                                  ) : null}
+                                  {adminContext?.is_platform_admin || adminContext?.project_ids.includes(campaign.project_id ?? "") ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveCampaignPartner(campaign, partner.id)}
+                                      className="focus-ring rounded-full bg-rose-400 px-2 py-0.5 text-[10px] font-black text-slate-950"
+                                        >
+                                          Remove
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="mt-2 text-sm font-semibold text-blue-100">No partner projects yet.</p>
+                              )}
+                            </div>
+                            {adminContext?.is_platform_admin || adminContext?.project_ids.includes(campaign.project_id ?? "") ? (
+                              <div className="grid gap-2 sm:min-w-72">
+                                <select
+                                  value={campaignPartnerProjectIds[campaign.id] ?? ""}
+                                  onChange={(event) => setCampaignPartnerProjectIds((current) => ({ ...current, [campaign.id]: event.target.value }))}
+                                  className="focus-ring rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm font-bold text-white"
+                                >
+                                  <option value="">Select partner project</option>
+                                  {activeProjects
+                                    .filter((project) => project.id !== campaign.project_id && !campaign.partner_projects?.some((partner) => partner.id === project.id))
+                                    .map((project) => (
+                                      <option key={project.id} value={project.id}>
+                                        {project.name}
+                                      </option>
+                                    ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddCampaignPartner(campaign)}
+                                  className="focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-black text-base-blue"
+                                >
+                                  <PlusCircle size={16} />
+                                  Invite partner
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="text-sm font-semibold text-blue-100 lg:max-w-xs">Partner campaign. You can add quests from your project, but only the campaign owner can manage partners.</p>
+                            )}
+                          </div>
                         </div>
                       </div>
                       <div className="rounded-lg bg-white/10 px-4 py-3 text-sm font-black text-cyan-200">

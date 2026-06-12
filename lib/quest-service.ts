@@ -1,6 +1,6 @@
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import { seedCompletions, seedProjects, seedQuests, seedUsers } from "@/lib/seed-data";
-import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventStats, LeaderboardRank, Notification, NotificationType, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
+import type { AdminContext, Campaign, CampaignInput, CampaignPartner, CampaignPartnerProject, Event, EventInput, EventStats, LeaderboardRank, Notification, NotificationType, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
 import { getImageUrl, isQuestEnded, normalizeWallet, normalizeXUsername } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp } from "@/lib/xp-policy";
 
@@ -10,6 +10,7 @@ let localUsers = [...seedUsers];
 let localCompletions = [...seedCompletions];
 let localProjectMembers: ProjectMember[] = [];
 let localCampaigns: Campaign[] = [];
+let localCampaignPartners: CampaignPartner[] = [];
 let localNotifications: Notification[] = [];
 let localEvents: Event[] = [];
 
@@ -109,6 +110,29 @@ function hasProjectAccess(context: AdminContext, projectId?: string | null) {
   return Boolean(projectId && (context.is_platform_admin || context.project_ids.includes(projectId)));
 }
 
+function toCampaignPartnerProject(project: Project): CampaignPartnerProject {
+  return {
+    id: project.id,
+    name: project.name,
+    slug: project.slug,
+    logo_url: project.logo_url,
+    project_type: project.project_type
+  };
+}
+
+function attachCampaignPartners(campaign: Campaign, partnerProjects: CampaignPartnerProject[] = []): Campaign {
+  return {
+    ...campaign,
+    partner_project_ids: campaign.partner_project_ids ?? partnerProjects.map((project) => project.id),
+    partner_statuses: campaign.partner_statuses ?? Object.fromEntries(partnerProjects.map((project) => [project.id, "active"])),
+    partner_projects: partnerProjects
+  };
+}
+
+function canUseCampaignForProject(campaign: Pick<Campaign, "project_id" | "partner_project_ids">, projectId?: string | null) {
+  return Boolean(projectId && (campaign.project_id === projectId || campaign.partner_project_ids?.includes(projectId)));
+}
+
 function isFeaturedActive(project: Pick<Project, "is_featured" | "featured_until">) {
   return Boolean(project.is_featured && (!project.featured_until || new Date(project.featured_until).getTime() > Date.now()));
 }
@@ -124,6 +148,18 @@ function sortProjects(projects: Project[]) {
     }
     if (a.is_verified !== b.is_verified) return a.is_verified ? -1 : 1;
     return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
+  });
+}
+
+function sortLeaderboardUsers(users: UserProfile[]) {
+  return [...users].sort((a, b) => {
+    const xpDiff = b.total_xp - a.total_xp;
+    if (xpDiff !== 0) return xpDiff;
+    const completedDiff = (b.completed_quests ?? 0) - (a.completed_quests ?? 0);
+    if (completedDiff !== 0) return completedDiff;
+    const createdDiff = new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime();
+    if (createdDiff !== 0) return createdDiff;
+    return a.wallet_address.localeCompare(b.wallet_address);
   });
 }
 
@@ -454,6 +490,51 @@ export async function getQuestsByProject(projectId: string): Promise<Quest[]> {
     }));
 }
 
+export async function getQuestsByCampaign(campaignId: string): Promise<Quest[]> {
+  if (!hasSupabaseConfig) {
+    return localQuests
+      .filter((quest) => {
+        const project = localProjects.find((item) => item.id === quest.project_id);
+        return quest.campaign_id === campaignId && quest.status !== "archived" && project?.status === "active";
+      })
+      .map((quest) => {
+        const project = localProjects.find((item) => item.id === quest.project_id);
+        return {
+          ...quest,
+          project_name: project?.name ?? quest.project_name,
+          project_logo_url: project?.logo_url,
+          project_type: project?.project_type,
+          project_is_verified: project?.is_verified,
+          project_is_featured: project?.is_featured,
+          project_featured_rank: project?.featured_rank,
+          project_featured_until: project?.featured_until
+        };
+      });
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("quests")
+    .select("*, projects(name, status, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until)")
+    .eq("campaign_id", campaignId)
+    .neq("status", "archived")
+    .eq("projects.status", "active")
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? [])
+    .filter((quest) => quest.projects?.status === "active")
+    .map((quest) => ({
+      ...quest,
+      project_name: quest.projects?.name,
+      project_logo_url: quest.projects?.logo_url,
+      project_type: quest.projects?.project_type,
+      project_is_verified: quest.projects?.is_verified,
+      project_is_featured: quest.projects?.is_featured,
+      project_featured_rank: quest.projects?.featured_rank,
+      project_featured_until: quest.projects?.featured_until
+    }));
+}
+
 export async function getProjects(): Promise<Project[]> {
   if (!hasSupabaseConfig) {
     return sortProjects(localProjects.filter((project) => project.status === "active"));
@@ -724,16 +805,116 @@ export async function updateProjectCuration(projectId: string, input: ProjectCur
   return data;
 }
 
+type CampaignPartnerWithProject = CampaignPartner & {
+  projects?: {
+    name: string;
+    slug: string;
+    logo_url?: string | null;
+    project_type?: Project["project_type"];
+  } | null;
+};
+
+function mapCampaignPartner(row: CampaignPartnerWithProject): CampaignPartner {
+  return {
+    ...row,
+    project_name: row.projects?.name,
+    project_slug: row.projects?.slug,
+    project_logo_url: row.projects?.logo_url,
+    project_type: row.projects?.project_type
+  };
+}
+
+async function getCampaignPartnersForCampaignIds(campaignIds: string[]): Promise<Map<string, CampaignPartner[]>> {
+  const rowsByCampaign = new Map<string, CampaignPartner[]>();
+  if (campaignIds.length === 0) return rowsByCampaign;
+
+  if (!hasSupabaseConfig) {
+    const projectsById = new Map(localProjects.map((project) => [project.id, project]));
+    for (const partner of localCampaignPartners.filter((item) => campaignIds.includes(item.campaign_id))) {
+      const project = projectsById.get(partner.project_id);
+      const mapped = {
+        ...partner,
+        project_name: project?.name,
+        project_slug: project?.slug,
+        project_logo_url: project?.logo_url,
+        project_type: project?.project_type
+      };
+      rowsByCampaign.set(partner.campaign_id, [...(rowsByCampaign.get(partner.campaign_id) ?? []), mapped]);
+    }
+    return rowsByCampaign;
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("campaign_partners")
+    .select("*, projects(name, slug, logo_url, project_type)")
+    .in("campaign_id", campaignIds);
+
+  if (error) {
+    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+    if (message.includes("campaign_partners") || error.code === "42P01") return rowsByCampaign;
+    throw new Error(formatDatabaseError(error, "Failed to load campaign partners."));
+  }
+
+  for (const row of ((data ?? []) as CampaignPartnerWithProject[]).map(mapCampaignPartner)) {
+    rowsByCampaign.set(row.campaign_id, [...(rowsByCampaign.get(row.campaign_id) ?? []), row]);
+  }
+  return rowsByCampaign;
+}
+
+export async function getCampaignPartners(campaignId: string): Promise<CampaignPartnerProject[]> {
+  const rows = await getCampaignPartnersForCampaignIds([campaignId]);
+  return (rows.get(campaignId) ?? []).filter((partner) => partner.status === "active").map((partner) => ({
+    id: partner.project_id,
+    name: partner.project_name ?? "Partner project",
+    slug: partner.project_slug ?? partner.project_id,
+    logo_url: partner.project_logo_url ?? null,
+    project_type: partner.project_type ?? "Other"
+  }));
+}
+
+async function attachPartnersToEvents(events: Event[]): Promise<Event[]> {
+  const partnersByCampaign = await getCampaignPartnersForCampaignIds(events.map((event) => event.campaign_id));
+  return events.map((event) => ({
+    ...event,
+    partner_projects: (partnersByCampaign.get(event.campaign_id) ?? []).filter((partner) => partner.status === "active").map((partner) => ({
+      id: partner.project_id,
+      name: partner.project_name ?? "Partner project",
+      slug: partner.project_slug ?? partner.project_id,
+      logo_url: partner.project_logo_url ?? null,
+      project_type: partner.project_type ?? "Other"
+    }))
+  }));
+}
+
 export async function getManageableCampaigns(actorWalletAddress?: string | null): Promise<Campaign[]> {
   const context = await getAdminContext(actorWalletAddress);
   if (!context) return [];
 
   if (!hasSupabaseConfig) {
+    const partnersByCampaign = await getCampaignPartnersForCampaignIds(localCampaigns.map((campaign) => campaign.id));
     return localCampaigns
-      .filter((campaign) => context.is_platform_admin || context.project_ids.includes(campaign.project_id ?? ""))
+      .map((campaign) => {
+        const partners = partnersByCampaign.get(campaign.id) ?? [];
+        const activePartnerIds = partners.filter((partner) => partner.status === "active").map((partner) => partner.project_id);
+        return attachCampaignPartners(
+          {
+            ...campaign,
+            project_name: localProjects.find((project) => project.id === campaign.project_id)?.name,
+            partner_project_ids: activePartnerIds,
+            partner_statuses: Object.fromEntries(partners.map((partner) => [partner.project_id, partner.status]))
+          },
+          partners
+            .map((partner) => localProjects.find((project) => project.id === partner.project_id))
+            .filter((project): project is Project => Boolean(project))
+            .map(toCampaignPartnerProject)
+        );
+      })
+      .filter((campaign) => {
+        const partners = partnersByCampaign.get(campaign.id) ?? [];
+        return context.is_platform_admin || context.project_ids.includes(campaign.project_id ?? "") || partners.some((partner) => context.project_ids.includes(partner.project_id));
+      })
       .map((campaign) => ({
-        ...campaign,
-        project_name: localProjects.find((project) => project.id === campaign.project_id)?.name
+        ...campaign
       }))
       .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
   }
@@ -747,12 +928,30 @@ export async function getManageableCampaigns(actorWalletAddress?: string | null)
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(formatDatabaseError(error, "Failed to load campaigns."));
+  const partnerRows = await getCampaignPartnersForCampaignIds(((data ?? []) as Campaign[]).map((campaign) => campaign.id));
   return ((data ?? []) as Campaign[])
-    .filter((campaign) => context.is_platform_admin || context.project_ids.includes(campaign.project_id ?? ""))
     .map((campaign) => ({
       ...campaign,
       project_name: projectNames.get(campaign.project_id ?? "")
-    }));
+    }))
+    .map((campaign) => {
+      const partners = partnerRows.get(campaign.id) ?? [];
+      const activePartnerIds = partners.filter((partner) => partner.status === "active").map((partner) => partner.project_id);
+      return attachCampaignPartners(
+        { ...campaign, partner_project_ids: activePartnerIds, partner_statuses: Object.fromEntries(partners.map((partner) => [partner.project_id, partner.status])) },
+        partners.map((partner) => ({
+          id: partner.project_id,
+          name: partner.project_name ?? "Partner project",
+          slug: partner.project_slug ?? partner.project_id,
+          logo_url: partner.project_logo_url ?? null,
+          project_type: partner.project_type ?? "Other"
+        }))
+      );
+    })
+    .filter((campaign) => {
+      const partners = partnerRows.get(campaign.id) ?? [];
+      return context.is_platform_admin || context.project_ids.includes(campaign.project_id ?? "") || partners.some((partner) => context.project_ids.includes(partner.project_id));
+    });
 }
 
 export async function createCampaign(input: CampaignInput, actorWalletAddress?: string | null): Promise<Campaign> {
@@ -801,9 +1000,119 @@ export async function createCampaign(input: CampaignInput, actorWalletAddress?: 
   };
 }
 
+export async function addCampaignPartner(campaignId: string, projectId: string, actorWalletAddress?: string | null): Promise<CampaignPartner> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context) throw new Error("Connect a project owner wallet before adding campaign partners.");
+
+  if (!hasSupabaseConfig) {
+    const campaign = localCampaigns.find((item) => item.id === campaignId);
+    const project = localProjects.find((item) => item.id === projectId);
+    if (!campaign) throw new Error("Campaign not found.");
+    if (!hasProjectAccess(context, campaign.project_id)) throw new Error("Only the campaign owner can add partner projects.");
+    if (!project || project.status !== "active") throw new Error("Partner project must be approved before it can join a campaign.");
+    if (campaign.project_id === projectId) throw new Error("Primary project is already the campaign owner.");
+    const existing = localCampaignPartners.find((partner) => partner.campaign_id === campaignId && partner.project_id === projectId);
+    if (existing) return existing;
+
+    const partner: CampaignPartner = {
+      id: crypto.randomUUID(),
+      campaign_id: campaignId,
+      project_id: projectId,
+      role: "partner",
+      status: "draft",
+      created_at: new Date().toISOString(),
+      project_name: project.name,
+      project_slug: project.slug,
+      project_logo_url: project.logo_url,
+      project_type: project.project_type
+    };
+    localCampaignPartners = [partner, ...localCampaignPartners];
+    return partner;
+  }
+
+  const client = assertSupabase();
+  const [{ data: campaign, error: campaignError }, { data: project, error: projectError }] = await Promise.all([
+    client.from("campaigns").select("id, project_id").eq("id", campaignId).single(),
+    client.from("projects").select("id, status").eq("id", projectId).single()
+  ]);
+
+  if (campaignError) throw new Error(formatDatabaseError(campaignError, "Failed to load selected campaign."));
+  if (projectError) throw new Error(formatDatabaseError(projectError, "Failed to load partner project."));
+  if (!hasProjectAccess(context, campaign.project_id)) throw new Error("Only the campaign owner can add partner projects.");
+  if (project.status !== "active") throw new Error("Partner project must be approved before it can join a campaign.");
+  if (campaign.project_id === projectId) throw new Error("Primary project is already the campaign owner.");
+
+  const { data, error } = await client
+    .from("campaign_partners")
+    .upsert({ campaign_id: campaignId, project_id: projectId, role: "partner", status: "draft" }, { onConflict: "campaign_id,project_id" })
+    .select("*, projects(name, slug, logo_url, project_type)")
+    .single();
+
+  if (error) throw new Error(formatDatabaseError(error, "Failed to add campaign partner. Run supabase/campaign-partners.sql in Supabase first."));
+  return mapCampaignPartner(data as CampaignPartnerWithProject);
+}
+
+export async function reviewCampaignPartner(campaignId: string, projectId: string, status: "active" | "archived", actorWalletAddress?: string | null): Promise<CampaignPartner> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context || !hasProjectAccess(context, projectId)) {
+    throw new Error("Only the partner project owner can accept or reject this collab invite.");
+  }
+
+  if (!hasSupabaseConfig) {
+    let updatedPartner: CampaignPartner | null = null;
+    localCampaignPartners = localCampaignPartners.map((partner) => {
+      if (partner.campaign_id !== campaignId || partner.project_id !== projectId) return partner;
+      const project = localProjects.find((item) => item.id === projectId);
+      updatedPartner = {
+        ...partner,
+        status,
+        project_name: project?.name,
+        project_slug: project?.slug,
+        project_logo_url: project?.logo_url,
+        project_type: project?.project_type
+      };
+      return updatedPartner;
+    });
+    if (!updatedPartner) throw new Error("Campaign partner invite not found.");
+    return updatedPartner;
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("campaign_partners")
+    .update({ status })
+    .eq("campaign_id", campaignId)
+    .eq("project_id", projectId)
+    .select("*, projects(name, slug, logo_url, project_type)")
+    .single();
+
+  if (error) throw new Error(formatDatabaseError(error, "Failed to update campaign partner invite."));
+  return mapCampaignPartner(data as CampaignPartnerWithProject);
+}
+
+export async function removeCampaignPartner(campaignId: string, projectId: string, actorWalletAddress?: string | null) {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context) throw new Error("Connect a project owner wallet before removing campaign partners.");
+
+  if (!hasSupabaseConfig) {
+    const campaign = localCampaigns.find((item) => item.id === campaignId);
+    if (!campaign) throw new Error("Campaign not found.");
+    if (!hasProjectAccess(context, campaign.project_id)) throw new Error("Only the campaign owner can remove partner projects.");
+    localCampaignPartners = localCampaignPartners.filter((partner) => !(partner.campaign_id === campaignId && partner.project_id === projectId));
+    return;
+  }
+
+  const client = assertSupabase();
+  const { data: campaign, error: campaignError } = await client.from("campaigns").select("id, project_id").eq("id", campaignId).single();
+  if (campaignError) throw new Error(formatDatabaseError(campaignError, "Failed to load selected campaign."));
+  if (!hasProjectAccess(context, campaign.project_id)) throw new Error("Only the campaign owner can remove partner projects.");
+
+  const { error } = await client.from("campaign_partners").delete().eq("campaign_id", campaignId).eq("project_id", projectId);
+  if (error) throw new Error(formatDatabaseError(error, "Failed to remove campaign partner."));
+}
+
 export async function getEvents(limit = 6): Promise<Event[]> {
   if (!hasSupabaseConfig) {
-    return sortEvents(localEvents.map((event) => hydrateEventJoins(event)).filter(isEventVisible)).slice(0, limit);
+    return attachPartnersToEvents(sortEvents(localEvents.map((event) => hydrateEventJoins(event)).filter(isEventVisible)).slice(0, limit));
   }
 
   const { data, error } = await assertSupabase()
@@ -821,7 +1130,7 @@ export async function getEvents(limit = 6): Promise<Event[]> {
     throw new Error(formatDatabaseError(error, "Failed to load events."));
   }
 
-  return sortEvents(((data ?? []) as EventWithJoins[]).map(mapEvent).filter(isEventVisible));
+  return attachPartnersToEvents(sortEvents(((data ?? []) as EventWithJoins[]).map(mapEvent).filter(isEventVisible)));
 }
 
 export async function getManageableEvents(actorWalletAddress?: string | null): Promise<Event[]> {
@@ -829,10 +1138,9 @@ export async function getManageableEvents(actorWalletAddress?: string | null): P
   if (!context) return [];
 
   if (!hasSupabaseConfig) {
+    const eventsWithPartners = await attachPartnersToEvents(localEvents.map((event) => hydrateEventJoins(event)));
     return sortEvents(
-      localEvents
-        .filter((event) => context.is_platform_admin || context.project_ids.includes(event.project_id))
-        .map((event) => hydrateEventJoins(event))
+      eventsWithPartners.filter((event) => context.is_platform_admin || context.project_ids.includes(event.project_id) || event.partner_projects?.some((project) => context.project_ids.includes(project.id)))
     );
   }
 
@@ -842,11 +1150,8 @@ export async function getManageableEvents(actorWalletAddress?: string | null): P
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(formatDatabaseError(error, "Failed to load events."));
-  return sortEvents(
-    ((data ?? []) as EventWithJoins[])
-      .map(mapEvent)
-      .filter((event) => context.is_platform_admin || context.project_ids.includes(event.project_id))
-  );
+  const eventsWithPartners = await attachPartnersToEvents(((data ?? []) as EventWithJoins[]).map(mapEvent));
+  return sortEvents(eventsWithPartners.filter((event) => context.is_platform_admin || context.project_ids.includes(event.project_id) || event.partner_projects?.some((project) => context.project_ids.includes(project.id))));
 }
 
 export async function createEvent(input: EventInput, actorWalletAddress?: string | null): Promise<Event> {
@@ -905,7 +1210,9 @@ export async function getEventBySlug(slug: string): Promise<Event | null> {
 
   if (!hasSupabaseConfig) {
     const event = localEvents.find((item) => item.slug === normalizedSlug || item.id === normalizedSlug);
-    return event ? hydrateEventJoins(event) : null;
+    if (!event) return null;
+    const [withPartners] = await attachPartnersToEvents([hydrateEventJoins(event)]);
+    return withPartners;
   }
 
   const { data, error } = await assertSupabase()
@@ -915,7 +1222,9 @@ export async function getEventBySlug(slug: string): Promise<Event | null> {
     .maybeSingle();
 
   if (error) throw error;
-  return data ? mapEvent(data as EventWithJoins) : null;
+  if (!data) return null;
+  const [withPartners] = await attachPartnersToEvents([mapEvent(data as EventWithJoins)]);
+  return withPartners;
 }
 
 export async function getEventStats(eventId: string): Promise<EventStats> {
@@ -1082,8 +1391,11 @@ export async function createQuest(input: QuestInput, actorWalletAddress?: string
       throw new Error("Project must be approved before quests can be created.");
     }
     const campaign = questInput.campaign_id ? localCampaigns.find((item) => item.id === questInput.campaign_id) : null;
-    if (questInput.campaign_id && campaign?.project_id !== questInput.project_id) {
-      throw new Error("Selected campaign does not belong to this project.");
+    if (questInput.campaign_id) {
+      const partnerProjectIds = localCampaignPartners.filter((partner) => partner.campaign_id === questInput.campaign_id && partner.status === "active").map((partner) => partner.project_id);
+      if (!campaign || !canUseCampaignForProject({ ...campaign, partner_project_ids: partnerProjectIds }, questInput.project_id)) {
+        throw new Error("Selected campaign is not available for this project.");
+      }
     }
 
     const quest = {
@@ -1109,8 +1421,10 @@ export async function createQuest(input: QuestInput, actorWalletAddress?: string
       .single();
 
     if (campaignError) throw new Error(formatDatabaseError(campaignError, "Failed to load selected campaign."));
-    if (campaign.project_id !== questInput.project_id) {
-      throw new Error("Selected campaign does not belong to this project.");
+    const partners = await getCampaignPartnersForCampaignIds([questInput.campaign_id]);
+    const partnerProjectIds = (partners.get(questInput.campaign_id) ?? []).filter((partner) => partner.status === "active").map((partner) => partner.project_id);
+    if (!canUseCampaignForProject({ ...campaign, partner_project_ids: partnerProjectIds }, questInput.project_id)) {
+      throw new Error("Selected campaign is not available for this project.");
     }
   }
 
@@ -1670,10 +1984,17 @@ export async function reviewQuestSubmission(submissionId: string, status: "appro
 export async function getLeaderboard(limit = 50): Promise<UserProfile[]> {
   if (!hasSupabaseConfig) {
     const users = await Promise.all(localUsers.map((user) => hydrateUserXp(user)));
-    return users.sort((a, b) => b.total_xp - a.total_xp).slice(0, limit);
+    return sortLeaderboardUsers(users).slice(0, limit);
   }
 
-  const { data, error } = await assertSupabase().from("leaderboard").select("*").order("total_xp", { ascending: false }).limit(limit);
+  const { data, error } = await assertSupabase()
+    .from("leaderboard")
+    .select("*")
+    .order("total_xp", { ascending: false })
+    .order("completed_quests", { ascending: false })
+    .order("created_at", { ascending: true })
+    .order("wallet_address", { ascending: true })
+    .limit(limit);
   if (error) throw error;
   return data ?? [];
 }
@@ -1683,7 +2004,7 @@ export async function getUserLeaderboardRank(walletAddress?: string | null): Pro
   const wallet = normalizeWallet(walletAddress);
 
   if (!hasSupabaseConfig) {
-    const users = (await Promise.all(localUsers.map((user) => hydrateUserXp(user)))).sort((a, b) => b.total_xp - a.total_xp);
+    const users = sortLeaderboardUsers(await Promise.all(localUsers.map((user) => hydrateUserXp(user))));
     const index = users.findIndex((user) => user.wallet_address === wallet);
     if (index === -1) return null;
     return {
@@ -1695,7 +2016,10 @@ export async function getUserLeaderboardRank(walletAddress?: string | null): Pro
   const { data, error } = await assertSupabase()
     .from("leaderboard")
     .select("*")
-    .order("total_xp", { ascending: false });
+    .order("total_xp", { ascending: false })
+    .order("completed_quests", { ascending: false })
+    .order("created_at", { ascending: true })
+    .order("wallet_address", { ascending: true });
 
   if (error) throw error;
   const users = (data ?? []) as UserProfile[];

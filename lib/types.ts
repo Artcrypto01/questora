@@ -185,10 +185,34 @@ export type Campaign = {
   ends_at: string | null;
   status: QuestStatus;
   project_name?: string;
+  partner_project_ids?: string[];
+  partner_projects?: CampaignPartnerProject[];
+  partner_statuses?: Record<string, QuestStatus>;
   created_at?: string;
 };
 
 export type CampaignInput = Pick<Campaign, "project_id" | "slug" | "name" | "description" | "purpose" | "starts_at" | "ends_at" | "status">;
+
+export type CampaignPartnerProject = {
+  id: string;
+  name: string;
+  slug: string;
+  logo_url: string | null;
+  project_type: ProjectType;
+};
+
+export type CampaignPartner = {
+  id: string;
+  campaign_id: string;
+  project_id: string;
+  role: string;
+  status: QuestStatus;
+  created_at?: string;
+  project_name?: string;
+  project_slug?: string;
+  project_logo_url?: string | null;
+  project_type?: ProjectType;
+};
 
 export type EventRewardType = "top_leaderboard" | "raffle" | "manual_selection" | "whitelist";
 
@@ -215,6 +239,7 @@ export type Event = {
   project_logo_url?: string | null;
   project_type?: ProjectType;
   campaign_name?: string;
+  partner_projects?: CampaignPartnerProject[];
 };
 
 export type EventInput = Pick<

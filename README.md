@@ -68,11 +68,14 @@ Run [supabase/project-curation.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODE
 
 Run [supabase/project-telegram-url.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/project-telegram-url.sql>) to add Telegram links for projects.
 
+Run [supabase/campaign-partners.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/campaign-partners.sql>) to add collab campaigns with partner projects.
+
 Before going live, run [supabase/pre-live-audit.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/pre-live-audit.sql>) to check platform admins, pending submissions, active quests without deadlines, and anon write policies that should be reviewed.
 
 The schema creates:
 
 - `campaigns`
+- `campaign_partners`
 - `projects`
 - `platform_admins`
 - `project_members`
@@ -98,6 +101,7 @@ Core behavior:
 - The leaderboard reads the `leaderboard` view sorted by computed XP.
 - Studio can export qualified users as CSV based on approved quest count and project XP.
 - Platform admins can manually mark projects as verified and feature up to five top campaign slots.
+- Campaign owners can invite partner projects to create collab campaigns with one shared event leaderboard. Partner owners must accept the invite before adding quests.
 
 The MVP uses permissive anon RLS policies so wallet-based flows work without a custom auth server. For production, replace the write policies with wallet/session-aware server actions or Supabase auth checks.
 
@@ -117,6 +121,7 @@ platform_admins(id, wallet_address, created_at)
 project_members(id, project_id, wallet_address, role, created_at)
 users(id, wallet_address, display_name, avatar_url, x_username, discord_username, bio, created_at)
 campaigns(id, name, description, starts_at, ends_at, status, created_at)
+campaign_partners(id, campaign_id, project_id, role, status, created_at)
 quests(id, project_id, campaign_id, title, description, task_url, instructions, proof_type, proof_placeholder, proof_example, xp_reward, status, category, ends_at, created_at)
 user_quests(id, user_id, quest_id, xp_awarded, status, proof_text, proof_url, review_note, reviewed_at, completed_at)
 badges(id, name, description, image_url, created_at)
@@ -138,7 +143,7 @@ user_badges(id, user_id, badge_id, awarded_at)
 
 ## Production Checklist
 
-1. Run all Supabase SQL files in this order: `schema.sql`, `xp-guardrails.sql`, `quest-deadlines.sql`, `retweet-quest-type.sql`, `project-curation.sql`.
+1. Run all Supabase SQL files in this order: `schema.sql`, `xp-guardrails.sql`, `quest-deadlines.sql`, `retweet-quest-type.sql`, `project-curation.sql`, `project-telegram-url.sql`, `events.sql`, `notifications-and-quest-title-scope.sql`, `campaign-partners.sql`.
 2. Add your platform admin wallet to `platform_admins` and `NEXT_PUBLIC_PLATFORM_ADMIN_WALLETS`.
 3. Run `pre-live-audit.sql` and review any anon write policies before opening the app publicly.
 4. Set production env vars in your host:
