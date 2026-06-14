@@ -268,7 +268,15 @@ export type EventStats = {
   totalXp: number;
 };
 
-export type NotificationType = "submission_created" | "submission_approved" | "submission_rejected" | "project_approved" | "project_rejected";
+export type NotificationType =
+  | "submission_created"
+  | "submission_approved"
+  | "submission_rejected"
+  | "project_approved"
+  | "project_rejected"
+  | "campaign_partner_invited"
+  | "campaign_partner_accepted"
+  | "campaign_partner_rejected";
 
 export type Notification = {
   id: string;

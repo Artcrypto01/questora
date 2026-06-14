@@ -119,6 +119,18 @@ function DashboardContent() {
   const earnedXp = user?.total_xp ?? 0;
   const approvedSubmissionCount = Array.from(submissions.values()).filter((item) => item.status === "approved" && item.reviewed_at).length;
   const inReviewCount = Array.from(submissions.values()).filter((item) => item.status === "submitted").length;
+  const campaignQuests = useMemo(() => quests.filter((quest) => quest.campaign_id === campaignFilter), [campaignFilter, quests]);
+  const campaignProgress = useMemo(() => {
+    const approved = campaignQuests.filter((quest) => {
+      const submission = submissions.get(quest.id);
+      return submission?.status === "approved" && Boolean(submission.reviewed_at);
+    }).length;
+    const submitted = campaignQuests.filter((quest) => submissions.get(quest.id)?.status === "submitted").length;
+    const total = campaignQuests.length;
+    const percent = total > 0 ? Math.round((approved / total) * 100) : 0;
+
+    return { approved, submitted, total, percent };
+  }, [campaignQuests, submissions]);
 
   async function handleComplete(quest: Quest, proof: { proof_text: string; proof_url: string }) {
     if (!address) return;
@@ -290,11 +302,23 @@ function DashboardContent() {
 
       {campaignFilter ? (
         <div className="mt-4 flex flex-col justify-between gap-3 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4 sm:flex-row sm:items-center">
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-sm font-black uppercase tracking-wider text-cyan-200">Event quest filter</p>
             <p className="mt-1 text-sm font-semibold text-blue-100">Showing quests from the selected event campaign.</p>
+            <div className="mt-4 max-w-xl">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-black uppercase tracking-wider text-blue-100">
+                <span>Your progress</span>
+                <span>
+                  {campaignProgress.approved}/{campaignProgress.total} approved
+                  {campaignProgress.submitted > 0 ? ` · ${campaignProgress.submitted} in review` : ""}
+                </span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-cyan-200 transition-all" style={{ width: `${campaignProgress.percent}%` }} />
+              </div>
+            </div>
           </div>
-          <Link href="/dashboard" className="focus-ring inline-flex justify-center rounded-lg bg-white px-4 py-2 text-sm font-black text-base-blue">
+          <Link href="/dashboard" className="focus-ring inline-flex shrink-0 justify-center rounded-lg bg-white px-4 py-2 text-sm font-black text-base-blue">
             Clear filter
           </Link>
         </div>

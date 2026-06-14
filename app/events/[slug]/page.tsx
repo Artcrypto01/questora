@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { useAccount } from "wagmi";
 import { Award, BadgeCheck, CalendarDays, Gift, Trophy, UserRound, UsersRound } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
-import { getCampaignPartners, getEventBySlug, getEventLeaderboard, getEventStats, getQuestsByCampaign } from "@/lib/quest-service";
-import type { CampaignPartnerProject, Event, EventStats, Quest, UserProfile } from "@/lib/types";
+import { getCampaignPartners, getEventBySlug, getEventLeaderboard, getEventStats, getOrCreateUser, getQuestsByCampaign, getUserCompletions } from "@/lib/quest-service";
+import type { CampaignPartnerProject, Event, EventStats, Quest, UserProfile, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, isQuestEnded, shortAddress } from "@/lib/utils";
 
 const rewardTypeLabels = {
@@ -18,11 +19,13 @@ const rewardTypeLabels = {
 
 export default function EventDetailPage() {
   const params = useParams<{ slug: string }>();
+  const { address, isConnected } = useAccount();
   const [event, setEvent] = useState<Event | null>(null);
   const [stats, setStats] = useState<EventStats | null>(null);
   const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
   const [quests, setQuests] = useState<Quest[]>([]);
   const [partners, setPartners] = useState<CampaignPartnerProject[]>([]);
+  const [userSubmissions, setUserSubmissions] = useState<Map<string, UserQuest>>(new Map());
 
   useEffect(() => {
     async function load() {
@@ -40,10 +43,18 @@ export default function EventDetailPage() {
       setLeaderboard(leaderboardRows);
       setQuests(campaignQuests);
       setPartners(partnerRows);
+
+      if (address) {
+        const userRow = await getOrCreateUser(address);
+        const completions = await getUserCompletions(userRow.id);
+        setUserSubmissions(new Map(completions.map((item) => [item.quest_id, item])));
+      } else {
+        setUserSubmissions(new Map());
+      }
     }
 
     load();
-  }, [params.slug]);
+  }, [address, params.slug]);
 
   if (!event) {
     return (
@@ -55,6 +66,12 @@ export default function EventDetailPage() {
   }
 
   const ended = isQuestEnded(event.ends_at);
+  const approvedQuestCount = quests.filter((quest) => {
+    const submission = userSubmissions.get(quest.id);
+    return submission?.status === "approved" && Boolean(submission.reviewed_at);
+  }).length;
+  const submittedQuestCount = quests.filter((quest) => userSubmissions.get(quest.id)?.status === "submitted").length;
+  const progressPercent = quests.length > 0 ? Math.round((approvedQuestCount / quests.length) * 100) : 0;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -108,6 +125,33 @@ export default function EventDetailPage() {
         <EventStat icon={CalendarDays} label={ended ? "Ended" : "Ends"} value={(event.ends_at ? formatQuestDeadline(event.ends_at) : null) ?? "Open"} />
         <EventStat icon={UsersRound} label="Participants" value={(stats?.participantCount ?? 0).toLocaleString()} />
         <EventStat icon={Award} label="Event XP" value={(stats?.totalXp ?? 0).toLocaleString()} />
+      </section>
+
+      <section className="mt-6 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-5 shadow-glow">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm font-black uppercase tracking-wider text-cyan-200">Your event progress</p>
+            <h2 className="mt-1 text-2xl font-black text-white">
+              {isConnected ? `${approvedQuestCount}/${quests.length} quests approved` : "Connect wallet to track progress"}
+            </h2>
+            <p className="mt-2 text-sm font-semibold text-blue-100">
+              {isConnected
+                ? submittedQuestCount > 0
+                  ? `${submittedQuestCount} quest${submittedQuestCount > 1 ? "s" : ""} waiting for review.`
+                  : "Approved quest progress updates after project owner review."
+                : "Your approved quests and in-review submissions will appear here."}
+            </p>
+          </div>
+          <div className="min-w-0 md:w-80">
+            <div className="flex justify-between text-xs font-black uppercase tracking-wider text-blue-100">
+              <span>Progress</span>
+              <span>{progressPercent}%</span>
+            </div>
+            <div className="mt-2 h-3 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-cyan-200 transition-all" style={{ width: `${progressPercent}%` }} />
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-[0.85fr_1.15fr]">

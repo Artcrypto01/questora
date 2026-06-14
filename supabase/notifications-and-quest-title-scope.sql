@@ -13,7 +13,7 @@ create unique index if not exists quests_project_uncampaigned_title_unique_idx
 create table if not exists public.notifications (
   id uuid primary key default gen_random_uuid(),
   recipient_wallet_address text not null,
-  type text not null check (type in ('submission_created', 'submission_approved', 'submission_rejected', 'project_approved', 'project_rejected')),
+  type text not null check (type in ('submission_created', 'submission_approved', 'submission_rejected', 'project_approved', 'project_rejected', 'campaign_partner_invited', 'campaign_partner_accepted', 'campaign_partner_rejected')),
   title text not null,
   body text not null,
   href text,
@@ -21,6 +21,11 @@ create table if not exists public.notifications (
   created_at timestamptz not null default now(),
   constraint notifications_recipient_wallet_lowercase check (recipient_wallet_address = lower(recipient_wallet_address))
 );
+
+alter table public.notifications drop constraint if exists notifications_type_check;
+alter table public.notifications
+  add constraint notifications_type_check
+  check (type in ('submission_created', 'submission_approved', 'submission_rejected', 'project_approved', 'project_rejected', 'campaign_partner_invited', 'campaign_partner_accepted', 'campaign_partner_rejected'));
 
 create index if not exists notifications_recipient_created_idx on public.notifications (recipient_wallet_address, created_at desc);
 create index if not exists notifications_recipient_unread_idx on public.notifications (recipient_wallet_address, read_at) where read_at is null;

@@ -256,6 +256,11 @@ function normalizeSubmissionStatus<T extends UserQuest>(submission: T): T {
   return submission;
 }
 
+function isMissingNotificationsTable(error: { code?: string; message?: string; details?: string }) {
+  const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+  return error.code === "42P01" || message.includes("relation") && message.includes("notifications") && message.includes("does not exist");
+}
+
 async function createNotification(input: {
   recipient_wallet_address?: string | null;
   type: NotificationType;
@@ -288,8 +293,7 @@ async function createNotification(input: {
 
   const { error } = await assertSupabase().from("notifications").insert(notification);
   if (error) {
-    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
-    if (message.includes("notifications") || error.code === "42P01") {
+    if (isMissingNotificationsTable(error)) {
       console.warn("Notifications table is not ready yet.", error);
       return;
     }
@@ -1027,12 +1031,18 @@ export async function addCampaignPartner(campaignId: string, projectId: string, 
       project_type: project.project_type
     };
     localCampaignPartners = [partner, ...localCampaignPartners];
+    await createNotifications(await getProjectNotificationRecipients(projectId), {
+      type: "campaign_partner_invited",
+      title: "New collab invite",
+      body: `You were invited to co-host "${campaign.name}".`,
+      href: "/admin?tab=campaigns"
+    });
     return partner;
   }
 
   const client = assertSupabase();
   const [{ data: campaign, error: campaignError }, { data: project, error: projectError }] = await Promise.all([
-    client.from("campaigns").select("id, project_id").eq("id", campaignId).single(),
+    client.from("campaigns").select("id, project_id, name").eq("id", campaignId).single(),
     client.from("projects").select("id, status").eq("id", projectId).single()
   ]);
 
@@ -1049,7 +1059,14 @@ export async function addCampaignPartner(campaignId: string, projectId: string, 
     .single();
 
   if (error) throw new Error(formatDatabaseError(error, "Failed to add campaign partner. Run supabase/campaign-partners.sql in Supabase first."));
-  return mapCampaignPartner(data as CampaignPartnerWithProject);
+  const mappedPartner = mapCampaignPartner(data as CampaignPartnerWithProject);
+  await createNotifications(await getProjectNotificationRecipients(projectId), {
+    type: "campaign_partner_invited",
+    title: "New collab invite",
+    body: `You were invited to co-host "${campaign.name}".`,
+    href: "/admin?tab=campaigns"
+  });
+  return mappedPartner;
 }
 
 export async function reviewCampaignPartner(campaignId: string, projectId: string, status: "active" | "archived", actorWalletAddress?: string | null): Promise<CampaignPartner> {
@@ -1059,6 +1076,7 @@ export async function reviewCampaignPartner(campaignId: string, projectId: strin
   }
 
   if (!hasSupabaseConfig) {
+    const campaign = localCampaigns.find((item) => item.id === campaignId);
     let updatedPartner: CampaignPartner | null = null;
     localCampaignPartners = localCampaignPartners.map((partner) => {
       if (partner.campaign_id !== campaignId || partner.project_id !== projectId) return partner;
@@ -1074,10 +1092,21 @@ export async function reviewCampaignPartner(campaignId: string, projectId: strin
       return updatedPartner;
     });
     if (!updatedPartner) throw new Error("Campaign partner invite not found.");
-    return updatedPartner;
+    const reviewedPartner = updatedPartner as CampaignPartner;
+    await createNotifications(await getProjectNotificationRecipients(campaign?.project_id), {
+      type: status === "active" ? "campaign_partner_accepted" : "campaign_partner_rejected",
+      title: status === "active" ? "Collab invite accepted" : "Collab invite rejected",
+      body: `${reviewedPartner.project_name ?? "A partner project"} ${status === "active" ? "accepted" : "rejected"} your collab invite${campaign?.name ? ` for "${campaign.name}"` : ""}.`,
+      href: "/admin?tab=campaigns"
+    });
+    return reviewedPartner;
   }
 
-  const { data, error } = await assertSupabase()
+  const client = assertSupabase();
+  const { data: campaign, error: campaignError } = await client.from("campaigns").select("id, project_id, name").eq("id", campaignId).single();
+  if (campaignError) throw new Error(formatDatabaseError(campaignError, "Failed to load selected campaign."));
+
+  const { data, error } = await client
     .from("campaign_partners")
     .update({ status })
     .eq("campaign_id", campaignId)
@@ -1086,7 +1115,14 @@ export async function reviewCampaignPartner(campaignId: string, projectId: strin
     .single();
 
   if (error) throw new Error(formatDatabaseError(error, "Failed to update campaign partner invite."));
-  return mapCampaignPartner(data as CampaignPartnerWithProject);
+  const mappedPartner = mapCampaignPartner(data as CampaignPartnerWithProject);
+  await createNotifications(await getProjectNotificationRecipients(campaign.project_id), {
+    type: status === "active" ? "campaign_partner_accepted" : "campaign_partner_rejected",
+    title: status === "active" ? "Collab invite accepted" : "Collab invite rejected",
+    body: `${mappedPartner.project_name ?? "A partner project"} ${status === "active" ? "accepted" : "rejected"} your collab invite for "${campaign.name}".`,
+    href: "/admin?tab=campaigns"
+  });
+  return mappedPartner;
 }
 
 export async function removeCampaignPartner(campaignId: string, projectId: string, actorWalletAddress?: string | null) {
@@ -1656,8 +1692,7 @@ export async function getNotifications(walletAddress?: string | null): Promise<N
     .limit(50);
 
   if (error) {
-    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
-    if (message.includes("notifications") || error.code === "42P01") return [];
+    if (isMissingNotificationsTable(error)) return [];
     throw error;
   }
 
@@ -1679,8 +1714,7 @@ export async function getUnreadNotificationCount(walletAddress?: string | null):
     .is("read_at", null);
 
   if (error) {
-    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
-    if (message.includes("notifications") || error.code === "42P01") return 0;
+    if (isMissingNotificationsTable(error)) return 0;
     throw error;
   }
 
