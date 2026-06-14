@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useAccount } from "wagmi";
-import { Award, BadgeCheck, CalendarDays, Gift, Trophy, UserRound, UsersRound } from "lucide-react";
+import { Award, BadgeCheck, CalendarDays, CheckCircle2, Circle, Clock3, Gift, Trophy, UserRound, UsersRound } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
 import { getCampaignPartners, getEventBySlug, getEventLeaderboard, getEventStats, getOrCreateUser, getQuestsByCampaign, getUserCompletions } from "@/lib/quest-service";
 import type { CampaignPartnerProject, Event, EventStats, Quest, UserProfile, UserQuest } from "@/lib/types";
@@ -72,6 +72,17 @@ export default function EventDetailPage() {
   }).length;
   const submittedQuestCount = quests.filter((quest) => userSubmissions.get(quest.id)?.status === "submitted").length;
   const progressPercent = quests.length > 0 ? Math.round((approvedQuestCount / quests.length) * 100) : 0;
+  const isEligible = quests.length > 0 && approvedQuestCount === quests.length;
+  const requirementRows = quests.slice(0, 5).map((quest) => {
+    const submission = userSubmissions.get(quest.id);
+    const approved = submission?.status === "approved" && Boolean(submission.reviewed_at);
+    const submitted = submission?.status === "submitted";
+    return {
+      id: quest.id,
+      title: quest.title,
+      state: approved ? "done" : submitted ? "review" : "open"
+    };
+  });
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -115,7 +126,7 @@ export default function EventDetailPage() {
             </div>
           </div>
           <Link href={`/dashboard?campaign=${encodeURIComponent(event.campaign_id)}`} className="focus-ring inline-flex items-center justify-center rounded-lg bg-white px-5 py-3 font-black text-base-blue">
-            Start quests
+            {isEligible ? "View qualified quests" : "Start quests"}
           </Link>
         </div>
       </section>
@@ -128,28 +139,51 @@ export default function EventDetailPage() {
       </section>
 
       <section className="mt-6 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-5 shadow-glow">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
           <div>
-            <p className="text-sm font-black uppercase tracking-wider text-cyan-200">Your event progress</p>
+            <p className="text-sm font-black uppercase tracking-wider text-cyan-200">Eligibility checklist</p>
             <h2 className="mt-1 text-2xl font-black text-white">
-              {isConnected ? `${approvedQuestCount}/${quests.length} quests approved` : "Connect wallet to track progress"}
+              {isConnected ? (isEligible ? "You are eligible" : `${approvedQuestCount}/${quests.length} requirements approved`) : "Connect wallet to track progress"}
             </h2>
             <p className="mt-2 text-sm font-semibold text-blue-100">
               {isConnected
-                ? submittedQuestCount > 0
-                  ? `${submittedQuestCount} quest${submittedQuestCount > 1 ? "s" : ""} waiting for review.`
-                  : "Approved quest progress updates after project owner review."
+                ? isEligible
+                  ? "You completed every requirement for this campaign."
+                  : submittedQuestCount > 0
+                    ? `${submittedQuestCount} requirement${submittedQuestCount > 1 ? "s" : ""} waiting for review.`
+                    : "Complete the quests below to qualify for this campaign."
                 : "Your approved quests and in-review submissions will appear here."}
             </p>
+            <div className="mt-5 max-w-md">
+              <div className="flex justify-between text-xs font-black uppercase tracking-wider text-blue-100">
+                <span>Progress</span>
+                <span>{progressPercent}%</span>
+              </div>
+              <div className="mt-2 h-3 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-cyan-200 transition-all" style={{ width: `${progressPercent}%` }} />
+              </div>
+            </div>
           </div>
-          <div className="min-w-0 md:w-80">
-            <div className="flex justify-between text-xs font-black uppercase tracking-wider text-blue-100">
-              <span>Progress</span>
-              <span>{progressPercent}%</span>
-            </div>
-            <div className="mt-2 h-3 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-cyan-200 transition-all" style={{ width: `${progressPercent}%` }} />
-            </div>
+          <div className="grid gap-2">
+            {requirementRows.length === 0 ? (
+              <div className="rounded-lg border border-white/10 bg-white/10 p-4 text-blue-100">No campaign requirements yet.</div>
+            ) : (
+              requirementRows.map((row) => (
+                <Link
+                  key={row.id}
+                  href={`/quests/${encodeURIComponent(row.id)}?campaign=${encodeURIComponent(event.campaign_id)}`}
+                  className="focus-ring flex items-center gap-3 rounded-lg border border-white/10 bg-white/10 p-3 transition hover:border-cyan-200/60 hover:bg-white/15"
+                >
+                  {row.state === "done" ? <CheckCircle2 className="shrink-0 text-emerald-300" size={20} /> : row.state === "review" ? <Clock3 className="shrink-0 text-amber-200" size={20} /> : <Circle className="shrink-0 text-blue-200" size={20} />}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-black text-white">{row.title}</p>
+                    <p className="text-xs font-semibold text-blue-200">{row.state === "done" ? "Approved" : row.state === "review" ? "In review" : "Start quest"}</p>
+                  </div>
+                  {row.state === "open" ? <span className="hidden rounded-full bg-white px-3 py-1 text-xs font-black text-base-blue sm:inline-flex">Open</span> : null}
+                </Link>
+              ))
+            )}
+            {quests.length > requirementRows.length ? <p className="text-xs font-semibold text-blue-200">+ {quests.length - requirementRows.length} more requirements in this campaign.</p> : null}
           </div>
         </div>
       </section>
@@ -215,7 +249,7 @@ export default function EventDetailPage() {
             quests.map((quest) => (
               <Link
                 key={quest.id}
-                href={`/dashboard?campaign=${encodeURIComponent(event.campaign_id)}`}
+                href={`/quests/${encodeURIComponent(quest.id)}?campaign=${encodeURIComponent(event.campaign_id)}`}
                 className="focus-ring rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 transition hover:-translate-y-0.5 hover:border-cyan-200/60"
               >
                 <div className="flex flex-wrap gap-2">

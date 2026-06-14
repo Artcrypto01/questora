@@ -6,9 +6,9 @@ import { useSearchParams } from "next/navigation";
 import { useAccount } from "wagmi";
 import { Badge, CalendarDays, CheckCircle2, Gift, ListFilter, Loader2, Search, ShieldCheck, Sparkles, Star } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
-import { QuestCard } from "@/components/QuestCard";
+import { QuestPreviewCard } from "@/components/QuestPreviewCard";
 import { StatCard } from "@/components/StatCard";
-import { getEvents, getOrCreateUser, getProjects, getQuests, getUserCompletions, completeQuest } from "@/lib/quest-service";
+import { getEvents, getOrCreateUser, getProjects, getQuests, getUserCompletions } from "@/lib/quest-service";
 import type { Event, Project, ProjectType, Quest, UserProfile, UserQuest } from "@/lib/types";
 import { formatQuestDeadline } from "@/lib/utils";
 
@@ -38,8 +38,6 @@ function DashboardContent() {
   const [projectType, setProjectType] = useState<"All" | ProjectType>("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [busyQuest, setBusyQuest] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
   const campaignFilter = searchParams.get("campaign");
   const projectFilter = searchParams.get("project");
 
@@ -119,6 +117,16 @@ function DashboardContent() {
   const earnedXp = user?.total_xp ?? 0;
   const approvedSubmissionCount = Array.from(submissions.values()).filter((item) => item.status === "approved" && item.reviewed_at).length;
   const inReviewCount = Array.from(submissions.values()).filter((item) => item.status === "submitted").length;
+  const featuredEvents = useMemo(() => events.filter((event) => event.is_featured), [events]);
+  const endingSoonEvents = useMemo(
+    () =>
+      events
+        .filter((event) => event.ends_at)
+        .sort((a, b) => new Date(a.ends_at ?? 0).getTime() - new Date(b.ends_at ?? 0).getTime())
+        .slice(0, 3),
+    [events]
+  );
+  const verifiedProjects = useMemo(() => filteredProjects.filter((project) => project.is_verified).slice(0, 6), [filteredProjects]);
   const campaignQuests = useMemo(() => quests.filter((quest) => quest.campaign_id === campaignFilter), [campaignFilter, quests]);
   const campaignProgress = useMemo(() => {
     const approved = campaignQuests.filter((quest) => {
@@ -131,22 +139,6 @@ function DashboardContent() {
 
     return { approved, submitted, total, percent };
   }, [campaignQuests, submissions]);
-
-  async function handleComplete(quest: Quest, proof: { proof_text: string; proof_url: string }) {
-    if (!address) return;
-    setBusyQuest(quest.id);
-    setMessage("");
-    try {
-      const updatedUser = await completeQuest(address, quest, proof);
-      setUser(updatedUser);
-      const latestCompletions = await getUserCompletions(updatedUser.id);
-      setSubmissions(new Map(latestCompletions.map((item) => [item.quest_id, item])));
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Failed to submit quest proof.");
-    } finally {
-      setBusyQuest(null);
-    }
-  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -171,6 +163,11 @@ function DashboardContent() {
           <div className="flex items-center justify-between gap-4">
             <h2 className="text-xl font-black text-white">Live events</h2>
             <span className="text-sm font-semibold text-blue-100">Prize campaigns</span>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+            <DiscoveryPill icon={Star} label="Featured campaigns" value={featuredEvents.length.toString()} />
+            <DiscoveryPill icon={CalendarDays} label="Ending soon" value={endingSoonEvents.length.toString()} />
+            <DiscoveryPill icon={ShieldCheck} label="Verified projects" value={verifiedProjects.length.toString()} />
           </div>
           <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
             {events.map((event) => (
@@ -215,6 +212,24 @@ function DashboardContent() {
                 </div>
               </Link>
             ))}
+          </div>
+        </section>
+      ) : null}
+
+      {endingSoonEvents.length > 0 ? (
+        <section className="mt-8 rounded-lg border border-amber-300/20 bg-amber-300/10 p-5 shadow-glow">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-black uppercase tracking-wider text-amber-200">Ending soon</p>
+              <h2 className="mt-1 text-2xl font-black text-white">Campaigns with deadlines coming up</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {endingSoonEvents.map((event) => (
+                <Link key={event.id} href={`/events/${encodeURIComponent(event.slug)}`} className="focus-ring rounded-full bg-white px-4 py-2 text-sm font-black text-base-blue">
+                  {event.name}
+                </Link>
+              ))}
+            </div>
           </div>
         </section>
       ) : null}
@@ -331,23 +346,51 @@ function DashboardContent() {
       ) : (
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
           {visibleQuests.map((quest) => (
-            <QuestCard
+            <QuestPreviewCard
               key={quest.id}
               quest={quest}
               completion={submissions.get(quest.id)}
-              disabled={!isConnected || Boolean(busyQuest)}
-              loading={busyQuest === quest.id}
-              onComplete={(proof) => handleComplete(quest, proof)}
+              campaignId={campaignFilter}
             />
           ))}
           {visibleQuests.length === 0 ? (
-            <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 text-blue-100 lg:col-span-2">
-              {approvedSubmissionCount > 0 ? "All available quests are completed or no quests match this filter." : "No quests found for this search."}
+            <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-8 text-blue-100 lg:col-span-2">
+              <Sparkles className="text-cyan-200" size={28} />
+              <h3 className="mt-4 text-xl font-black text-white">{approvedSubmissionCount > 0 ? "You are caught up" : "No quests found"}</h3>
+              <p className="mt-2 max-w-2xl leading-7">
+                {approvedSubmissionCount > 0
+                  ? "All available quests are completed or no quests match this filter. Check live events or try another project category."
+                  : "Try a different search, project, or category filter."}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setProjectId("All");
+                  setProjectType("All");
+                }}
+                className="focus-ring mt-5 rounded-lg bg-white px-4 py-2.5 text-sm font-black text-base-blue"
+              >
+                Reset filters
+              </button>
             </div>
           ) : null}
         </div>
       )}
-      {message ? <p className="mt-4 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4 text-sm font-semibold text-cyan-100">{message}</p> : null}
+    </div>
+  );
+}
+
+function DiscoveryPill({ icon: Icon, label, value }: { icon: typeof Star; label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/10 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-wider text-blue-200">{label}</p>
+          <p className="mt-1 text-2xl font-black text-white">{value}</p>
+        </div>
+        <Icon className="text-cyan-200" size={22} />
+      </div>
     </div>
   );
 }

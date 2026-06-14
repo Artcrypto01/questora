@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, CheckCircle2, Clock3, Loader2, Send, ShieldCheck, Star, Zap } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, Clock3, FileCheck2, Loader2, Send, ShieldCheck, Star, Zap } from "lucide-react";
 import { useState } from "react";
 import { ProjectImage } from "@/components/ProjectImage";
 import type { Quest, UserQuest } from "@/lib/types";
@@ -64,10 +64,10 @@ export function QuestCard({ quest, completion, disabled, loading, onComplete }: 
   const requiresUrl = quest.proof_type === "tweet" || quest.proof_type === "url";
   const hasRequiredProof = requiresUrl ? Boolean(proofUrl.trim()) : Boolean(proofText.trim() || proofUrl.trim());
   const featuredActive = Boolean(quest.project_is_featured && (!quest.project_featured_until || new Date(quest.project_featured_until).getTime() > Date.now()));
+  const proofLabel = quest.proof_type === "tweet" ? "X proof" : quest.proof_type === "url" ? "Link proof" : quest.proof_type === "discord" ? "Discord proof" : quest.proof_type === "wallet" ? "Wallet proof" : "Text proof";
 
   return (
     <article className="group overflow-hidden rounded-lg border border-white/10 bg-[#0b1730]/95 shadow-glow transition hover:-translate-y-0.5 hover:border-blue-300/40">
-      <div className="h-1.5 bg-gradient-to-r from-base-blue via-cyan-300 to-emerald-300" />
       <div className="p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
@@ -76,7 +76,7 @@ export function QuestCard({ quest, completion, disabled, loading, onComplete }: 
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-black text-white">{quest.project_name || "Questora project"}</p>
-            <div className="mt-1 flex flex-wrap gap-1">
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
               {quest.project_type ? <span className="text-xs font-semibold text-cyan-200">{quest.project_type}</span> : null}
               {quest.project_is_verified ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-300 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-950">
@@ -93,12 +93,27 @@ export function QuestCard({ quest, completion, disabled, loading, onComplete }: 
             </div>
           </div>
         </div>
-        {ended || effectiveStatus ? (
-          <span className="shrink-0 rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{ended ? "Ended" : effectiveStatus}</span>
-        ) : null}
+        <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-black uppercase tracking-wider ${ended ? "bg-rose-400 text-slate-950" : effectiveStatus ? "bg-white/10 text-blue-100" : "bg-cyan-200 text-slate-950"}`}>
+          {ended ? "Ended" : effectiveStatus ?? "Open"}
+        </span>
       </div>
       <h2 className="mt-5 text-xl font-black text-white">{quest.title}</h2>
-      <p className="mt-3 min-h-14 leading-7 text-blue-100">{quest.description}</p>
+      <p className="mt-3 line-clamp-2 leading-7 text-blue-100">{quest.description}</p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-200 px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">
+          <Zap size={13} />
+          {quest.xp_reward.toLocaleString()} XP
+        </span>
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">
+          <FileCheck2 size={13} />
+          {proofLabel}
+        </span>
+        {quest.ends_at ? (
+          <span className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wider ${ended ? "bg-rose-400 text-slate-950" : "bg-white/10 text-blue-100"}`}>
+            {ended ? "Ended" : `Ends ${formatQuestDeadline(quest.ends_at)}`}
+          </span>
+        ) : null}
+      </div>
       {quest.instructions ? (
         <div className="mt-4 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4">
           <p className="text-xs font-black uppercase tracking-wider text-cyan-200">Instructions</p>
@@ -117,12 +132,6 @@ export function QuestCard({ quest, completion, disabled, loading, onComplete }: 
           Open task link
         </a>
       ) : null}
-      {quest.ends_at ? (
-        <div className={`mt-4 rounded-lg border p-3 text-sm font-semibold ${ended ? "border-rose-300/30 bg-rose-400/10 text-rose-100" : "border-white/10 bg-white/10 text-blue-100"}`}>
-          {ended ? "Ended" : "Ends"} {formatQuestDeadline(quest.ends_at)}
-        </div>
-      ) : null}
-
       {!isSubmitted && !ended ? (
         <div className="mt-5 grid gap-3">
           {canResubmit && completion?.review_note ? (
@@ -146,10 +155,7 @@ export function QuestCard({ quest, completion, disabled, loading, onComplete }: 
       ) : null}
 
       <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="inline-flex items-center gap-2 font-black text-cyan-200">
-          <Zap size={19} />
-          {quest.xp_reward.toLocaleString()} XP
-        </div>
+        <p className="text-sm font-semibold text-blue-100">{quest.global_xp_reward.toLocaleString()} global XP</p>
         <button
           type="button"
           onClick={() => onComplete({ proof_text: proofText, proof_url: proofUrl })}

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowUpRight, BadgeCheck, Globe, MessageCircle, Send, ShieldCheck, Star, Trophy, UserRound } from "lucide-react";
+import { ArrowUpRight, BadgeCheck, CalendarDays, Globe, MessageCircle, Send, ShieldCheck, Sparkles, Star, Trophy, UserRound } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
 import { getProjectBySlug, getProjectLeaderboard, getProjectStats, getQuestsByProject } from "@/lib/quest-service";
 import type { ProofType, Project, Quest, UserProfile } from "@/lib/types";
@@ -59,6 +59,8 @@ export default function ProjectDetailPage() {
   }
 
   const featuredActive = Boolean(project.is_featured && (!project.featured_until || new Date(project.featured_until).getTime() > Date.now()));
+  const liveQuests = quests.filter((quest) => quest.status === "active" && !isQuestEnded(quest.ends_at));
+  const endedQuests = quests.filter((quest) => quest.status !== "active" || isQuestEnded(quest.ends_at));
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -109,16 +111,22 @@ export default function ProjectDetailPage() {
 
       <section className="mt-8">
         <div className="flex items-center justify-between gap-4">
-          <h2 className="text-2xl font-black text-white">Project quests</h2>
-          <Link href="/dashboard" className="focus-ring rounded-lg bg-white px-4 py-2 font-bold text-base-blue">
+          <div>
+            <p className="text-sm font-black uppercase tracking-wider text-cyan-200">Live quest hub</p>
+            <h2 className="mt-1 text-2xl font-black text-white">Active quests</h2>
+          </div>
+          <Link href={`/dashboard?project=${encodeURIComponent(project.id)}`} className="focus-ring rounded-lg bg-white px-4 py-2 font-bold text-base-blue">
             Work on quests
           </Link>
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-          {quests.map((quest) => {
+          {liveQuests.length === 0 ? (
+            <EmptyProjectState title="No active quests right now" body="This project does not have a live quest available. Check back later or explore other verified communities." />
+          ) : null}
+          {liveQuests.map((quest) => {
             const ended = isQuestEnded(quest.ends_at);
             return (
-            <article key={quest.id} className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5">
+            <Link key={quest.id} href={`/quests/${encodeURIComponent(quest.id)}`} className="focus-ring block rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 transition hover:-translate-y-0.5 hover:border-cyan-200/60">
               <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-950">{quest.category}</span>
               <span className="ml-2 rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{proofTypeLabels[quest.proof_type]}</span>
               <span className="ml-2 rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{questTypeLabels[quest.quest_type]}</span>
@@ -142,11 +150,37 @@ export default function ProjectDetailPage() {
               <p className="mt-5 font-black text-cyan-200">
                 {quest.xp_reward.toLocaleString()} project XP / {quest.global_xp_reward.toLocaleString()} global XP
               </p>
-            </article>
+            </Link>
             );
           })}
         </div>
       </section>
+
+      {endedQuests.length > 0 ? (
+        <section className="mt-8 rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-black uppercase tracking-wider text-blue-200">Past activity</p>
+              <h2 className="mt-1 text-2xl font-black text-white">Ended or archived quests</h2>
+            </div>
+            <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-wider text-blue-100">{endedQuests.length} quests</span>
+          </div>
+          <div className="mt-4 grid gap-2">
+            {endedQuests.slice(0, 6).map((quest) => (
+              <div key={quest.id} className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-black text-white">{quest.title}</p>
+                  <p className="mt-1 text-sm text-blue-200">{quest.ends_at ? `Ended ${formatQuestDeadline(quest.ends_at)}` : "Archived"}</p>
+                </div>
+                <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-wider text-blue-100">
+                  <CalendarDays size={13} />
+                  Past quest
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="mt-8 overflow-hidden rounded-lg border border-white/10 bg-[#0b1730]/92 shadow-glow">
         <div className="flex items-center justify-between gap-4 bg-base-blue px-5 py-4">
@@ -176,6 +210,19 @@ export default function ProjectDetailPage() {
           ))
         )}
       </section>
+    </div>
+  );
+}
+
+function EmptyProjectState({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 text-blue-100 md:col-span-2">
+      <Sparkles className="text-cyan-200" size={28} />
+      <h3 className="mt-4 text-xl font-black text-white">{title}</h3>
+      <p className="mt-2 max-w-2xl leading-7">{body}</p>
+      <Link href="/dashboard" className="focus-ring mt-5 inline-flex rounded-lg bg-white px-4 py-2.5 text-sm font-black text-base-blue">
+        Explore quests
+      </Link>
     </div>
   );
 }

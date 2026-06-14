@@ -539,6 +539,49 @@ export async function getQuestsByCampaign(campaignId: string): Promise<Quest[]> 
     }));
 }
 
+export async function getQuestById(questId: string): Promise<Quest | null> {
+  const decodedQuestId = decodeURIComponent(questId).trim();
+  if (!decodedQuestId) return null;
+
+  if (!hasSupabaseConfig) {
+    const quest = localQuests.find((item) => item.id === decodedQuestId);
+    if (!quest) return null;
+    const project = localProjects.find((item) => item.id === quest.project_id);
+    if (project?.status !== "active" || quest.status === "archived") return null;
+
+    return {
+      ...quest,
+      project_name: project?.name ?? quest.project_name,
+      project_logo_url: project?.logo_url,
+      project_type: project?.project_type,
+      project_is_verified: project?.is_verified,
+      project_is_featured: project?.is_featured,
+      project_featured_rank: project?.featured_rank,
+      project_featured_until: project?.featured_until
+    };
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("quests")
+    .select("*, projects(name, status, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until)")
+    .eq("id", decodedQuestId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data || data.projects?.status !== "active" || data.status === "archived") return null;
+
+  return {
+    ...data,
+    project_name: data.projects?.name,
+    project_logo_url: data.projects?.logo_url,
+    project_type: data.projects?.project_type,
+    project_is_verified: data.projects?.is_verified,
+    project_is_featured: data.projects?.is_featured,
+    project_featured_rank: data.projects?.featured_rank,
+    project_featured_until: data.projects?.featured_until
+  };
+}
+
 export async function getProjects(): Promise<Project[]> {
   if (!hasSupabaseConfig) {
     return sortProjects(localProjects.filter((project) => project.status === "active"));
