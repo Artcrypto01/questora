@@ -26,6 +26,7 @@ export default function EventDetailPage() {
   const [quests, setQuests] = useState<Quest[]>([]);
   const [partners, setPartners] = useState<CampaignPartnerProject[]>([]);
   const [userSubmissions, setUserSubmissions] = useState<Map<string, UserQuest>>(new Map());
+  const [showAllRequirements, setShowAllRequirements] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -73,7 +74,9 @@ export default function EventDetailPage() {
   const submittedQuestCount = quests.filter((quest) => userSubmissions.get(quest.id)?.status === "submitted").length;
   const progressPercent = quests.length > 0 ? Math.round((approvedQuestCount / quests.length) * 100) : 0;
   const isEligible = quests.length > 0 && approvedQuestCount === quests.length;
-  const requirementRows = quests.slice(0, 5).map((quest) => {
+  const displayedRequirements = showAllRequirements ? quests : quests.slice(0, 5);
+  const hiddenRequirementCount = Math.max(quests.length - displayedRequirements.length, 0);
+  const requirementRows = displayedRequirements.map((quest) => {
     const submission = userSubmissions.get(quest.id);
     const approved = submission?.status === "approved" && Boolean(submission.reviewed_at);
     const submitted = submission?.status === "submitted";
@@ -183,7 +186,15 @@ export default function EventDetailPage() {
                 </Link>
               ))
             )}
-            {quests.length > requirementRows.length ? <p className="text-xs font-semibold text-blue-200">+ {quests.length - requirementRows.length} more requirements in this campaign.</p> : null}
+            {quests.length > 5 ? (
+              <button
+                type="button"
+                onClick={() => setShowAllRequirements((value) => !value)}
+                className="focus-ring justify-self-start rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-black text-cyan-100 transition hover:border-cyan-200 hover:bg-white/15"
+              >
+                {showAllRequirements ? "Show less" : `Show all requirements +${hiddenRequirementCount}`}
+              </button>
+            ) : null}
           </div>
         </div>
       </section>
