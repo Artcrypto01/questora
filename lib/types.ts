@@ -112,6 +112,28 @@ export type ProjectInput = Pick<
 
 export type ProjectCurationInput = Pick<Project, "is_verified" | "is_featured" | "featured_rank" | "featured_until">;
 
+export type ProjectVerificationRequestStatus = "submitted" | "approved" | "rejected";
+
+export type ProjectVerificationRequest = {
+  id: string;
+  project_id: string;
+  requester_wallet_address: string;
+  reason: string;
+  proof_url: string | null;
+  status: ProjectVerificationRequestStatus;
+  review_note: string | null;
+  reviewed_by_wallet_address: string | null;
+  reviewed_at: string | null;
+  created_at?: string;
+  project_name?: string;
+  project_slug?: string;
+  project_logo_url?: string | null;
+  project_website_url?: string | null;
+  project_x_url?: string | null;
+  project_discord_url?: string | null;
+  project_telegram_url?: string | null;
+};
+
 export type QuestInput = Pick<
   Quest,
   | "project_id"

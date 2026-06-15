@@ -1,6 +1,6 @@
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import { seedCompletions, seedProjects, seedQuests, seedUsers } from "@/lib/seed-data";
-import type { AdminContext, Campaign, CampaignInput, CampaignPartner, CampaignPartnerProject, Event, EventInput, EventStats, LeaderboardRank, Notification, NotificationType, Project, ProjectCurationInput, ProjectInput, ProjectMember, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
+import type { AdminContext, Campaign, CampaignInput, CampaignPartner, CampaignPartnerProject, Event, EventInput, EventStats, LeaderboardRank, Notification, NotificationType, Project, ProjectCurationInput, ProjectInput, ProjectMember, ProjectVerificationRequest, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
 import { getImageUrl, isQuestEnded, normalizeWallet, normalizeXUsername } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp } from "@/lib/xp-policy";
 
@@ -13,6 +13,7 @@ let localCampaigns: Campaign[] = [];
 let localCampaignPartners: CampaignPartner[] = [];
 let localNotifications: Notification[] = [];
 let localEvents: Event[] = [];
+let localVerificationRequests: ProjectVerificationRequest[] = [];
 
 function assertSupabase() {
   if (!supabase) {
@@ -850,6 +851,170 @@ export async function updateProjectCuration(projectId: string, input: ProjectCur
   const { data, error } = await assertSupabase().from("projects").update(curationInput).eq("id", projectId).select("*").single();
   if (error) throw error;
   return data;
+}
+
+type VerificationRequestWithProject = ProjectVerificationRequest & {
+  projects?: {
+    name?: string;
+    slug?: string;
+    logo_url?: string | null;
+    website_url?: string | null;
+    x_url?: string | null;
+    discord_url?: string | null;
+    telegram_url?: string | null;
+  } | null;
+};
+
+function mapVerificationRequest(row: VerificationRequestWithProject): ProjectVerificationRequest {
+  return {
+    ...row,
+    project_name: row.project_name ?? row.projects?.name,
+    project_slug: row.project_slug ?? row.projects?.slug,
+    project_logo_url: row.project_logo_url ?? row.projects?.logo_url,
+    project_website_url: row.project_website_url ?? row.projects?.website_url,
+    project_x_url: row.project_x_url ?? row.projects?.x_url,
+    project_discord_url: row.project_discord_url ?? row.projects?.discord_url,
+    project_telegram_url: row.project_telegram_url ?? row.projects?.telegram_url
+  };
+}
+
+export async function getProjectVerificationRequests(actorWalletAddress?: string | null): Promise<ProjectVerificationRequest[]> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context) return [];
+
+  if (!hasSupabaseConfig) {
+    const projectById = new Map(localProjects.map((project) => [project.id, project]));
+    return localVerificationRequests
+      .filter((request) => context.is_platform_admin || context.project_ids.includes(request.project_id))
+      .map((request) => {
+        const project = projectById.get(request.project_id);
+        return mapVerificationRequest({ ...request, projects: project ?? null });
+      })
+      .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("project_verification_requests")
+    .select("*, projects(name, slug, logo_url, website_url, x_url, discord_url, telegram_url)")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+    if (message.includes("project_verification_requests") || error.code === "42P01") return [];
+    throw new Error(formatDatabaseError(error, "Failed to load verification requests."));
+  }
+
+  return ((data ?? []) as VerificationRequestWithProject[]).map(mapVerificationRequest).filter((request) => context.is_platform_admin || context.project_ids.includes(request.project_id));
+}
+
+export async function requestProjectVerification(projectId: string, input: { reason: string; proof_url?: string | null }, actorWalletAddress?: string | null): Promise<ProjectVerificationRequest> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context || !hasProjectAccess(context, projectId)) {
+    throw new Error("Only the project owner or team can request verification.");
+  }
+
+  const reason = input.reason.trim();
+  if (reason.length < 20) {
+    throw new Error("Add a short reason with at least 20 characters.");
+  }
+
+  const requestInput = {
+    project_id: projectId,
+    requester_wallet_address: normalizeWallet(actorWalletAddress ?? context.wallet_address),
+    reason,
+    proof_url: input.proof_url?.trim() || null,
+    status: "submitted" as const,
+    review_note: null,
+    reviewed_by_wallet_address: null,
+    reviewed_at: null
+  };
+
+  if (!hasSupabaseConfig) {
+    const project = localProjects.find((item) => item.id === projectId);
+    if (!project) throw new Error("Project not found.");
+    if (project.is_verified) throw new Error("This project is already verified.");
+    const existing = localVerificationRequests.find((request) => request.project_id === projectId && request.status === "submitted");
+    if (existing) return mapVerificationRequest({ ...existing, projects: project });
+
+    const request: ProjectVerificationRequest = {
+      id: crypto.randomUUID(),
+      ...requestInput,
+      created_at: new Date().toISOString()
+    };
+    localVerificationRequests = [request, ...localVerificationRequests];
+    return mapVerificationRequest({ ...request, projects: project });
+  }
+
+  const client = assertSupabase();
+  const { data: project, error: projectError } = await client.from("projects").select("id, is_verified").eq("id", projectId).single();
+  if (projectError) throw new Error(formatDatabaseError(projectError, "Failed to load project."));
+  if (project.is_verified) throw new Error("This project is already verified.");
+
+  const { data: existing, error: existingError } = await client
+    .from("project_verification_requests")
+    .select("*, projects(name, slug, logo_url, website_url, x_url, discord_url, telegram_url)")
+    .eq("project_id", projectId)
+    .eq("status", "submitted")
+    .maybeSingle();
+  if (existingError) throw new Error(formatDatabaseError(existingError, "Failed to check existing verification request."));
+  if (existing) return mapVerificationRequest(existing as VerificationRequestWithProject);
+
+  const { data, error } = await client
+    .from("project_verification_requests")
+    .insert(requestInput)
+    .select("*, projects(name, slug, logo_url, website_url, x_url, discord_url, telegram_url)")
+    .single();
+
+  if (error) throw new Error(formatDatabaseError(error, "Failed to submit verification request. Run supabase/project-verification-requests.sql in Supabase first."));
+  return mapVerificationRequest(data as VerificationRequestWithProject);
+}
+
+export async function reviewProjectVerificationRequest(requestId: string, status: "approved" | "rejected", reviewNote = "", actorWalletAddress?: string | null): Promise<ProjectVerificationRequest> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context?.is_platform_admin) {
+    throw new Error("Only platform admin can review verification requests.");
+  }
+
+  const reviewedAt = new Date().toISOString();
+  const reviewer = actorWalletAddress ? normalizeWallet(actorWalletAddress) : context.wallet_address;
+
+  if (!hasSupabaseConfig) {
+    const request = localVerificationRequests.find((item) => item.id === requestId);
+    if (!request) throw new Error("Verification request not found.");
+    localVerificationRequests = localVerificationRequests.map((item) =>
+      item.id === requestId ? { ...item, status, review_note: reviewNote.trim() || null, reviewed_by_wallet_address: reviewer, reviewed_at: reviewedAt } : item
+    );
+    if (status === "approved") {
+      localProjects = localProjects.map((project) => (project.id === request.project_id ? { ...project, is_verified: true, verified_at: reviewedAt } : project));
+    }
+    const updated = localVerificationRequests.find((item) => item.id === requestId) as ProjectVerificationRequest;
+    const project = localProjects.find((item) => item.id === updated.project_id);
+    return mapVerificationRequest({ ...updated, projects: project ?? null });
+  }
+
+  const client = assertSupabase();
+  const { data: request, error: requestError } = await client.from("project_verification_requests").select("*").eq("id", requestId).single();
+  if (requestError) throw new Error(formatDatabaseError(requestError, "Failed to load verification request."));
+
+  const { data, error } = await client
+    .from("project_verification_requests")
+    .update({
+      status,
+      review_note: reviewNote.trim() || null,
+      reviewed_by_wallet_address: reviewer,
+      reviewed_at: reviewedAt
+    })
+    .eq("id", requestId)
+    .select("*, projects(name, slug, logo_url, website_url, x_url, discord_url, telegram_url)")
+    .single();
+  if (error) throw new Error(formatDatabaseError(error, "Failed to review verification request."));
+
+  if (status === "approved") {
+    const { error: projectError } = await client.from("projects").update({ is_verified: true, verified_at: reviewedAt }).eq("id", request.project_id);
+    if (projectError) throw new Error(formatDatabaseError(projectError, "Failed to verify project."));
+  }
+
+  return mapVerificationRequest(data as VerificationRequestWithProject);
 }
 
 type CampaignPartnerWithProject = CampaignPartner & {

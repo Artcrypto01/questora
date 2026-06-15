@@ -3,6 +3,7 @@ import { ArrowUpRight, Twitter } from "lucide-react";
 
 const footerLinks = [
   { href: "/dashboard", label: "Quests" },
+  { href: "/projects", label: "Projects" },
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/profile", label: "Profile" },
   { href: "/admin", label: "Studio" }

@@ -4,8 +4,8 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
 import { Archive, ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Download, ExternalLink, FolderPlus, Gift, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
-import { addCampaignPartner, createCampaign, createEvent, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableProjects, getManageableQuests, getProjects, getQualifiedUsers, getQuestSubmissions, removeCampaignPartner, reviewCampaignPartner, reviewProject, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
-import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventRewardType, Project, ProjectInput, ProjectType, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
+import { addCampaignPartner, createCampaign, createEvent, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableProjects, getManageableQuests, getProjectVerificationRequests, getProjects, getQualifiedUsers, getQuestSubmissions, removeCampaignPartner, requestProjectVerification, reviewCampaignPartner, reviewProject, reviewProjectVerificationRequest, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
+import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventRewardType, Project, ProjectInput, ProjectType, ProjectVerificationRequest, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, fromDatetimeLocalValue, isQuestEnded, toDatetimeLocalValue } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp, difficultyLabels, getQuestXpPolicy, questTypeLabels } from "@/lib/xp-policy";
 
@@ -265,6 +265,7 @@ export default function AdminPage() {
   const [managedQuests, setManagedQuests] = useState<Quest[]>([]);
   const [submissions, setSubmissions] = useState<UserQuest[]>([]);
   const [qualifiedUsers, setQualifiedUsers] = useState<QualifiedUser[]>([]);
+  const [verificationRequests, setVerificationRequests] = useState<ProjectVerificationRequest[]>([]);
   const [qualifiedProjectId, setQualifiedProjectId] = useState("");
   const [minimumQualifiedXp, setMinimumQualifiedXp] = useState(100);
   const [minimumQualifiedQuests, setMinimumQualifiedQuests] = useState(1);
@@ -282,6 +283,8 @@ export default function AdminPage() {
   const [questListFilter, setQuestListFilter] = useState<QuestListFilter>("active");
   const [campaignPartnerProjectIds, setCampaignPartnerProjectIds] = useState<Record<string, string>>({});
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+  const [verificationForms, setVerificationForms] = useState<Record<string, { reason: string; proof_url: string }>>({});
+  const [verificationReviewNotes, setVerificationReviewNotes] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const selectedProject = projects.find((project) => project.id === form.project_id);
   const selectedCampaign = campaigns.find((campaign) => campaign.id === form.campaign_id);
@@ -297,6 +300,7 @@ export default function AdminPage() {
   const globalXpReward = calculateGlobalXp(form.xp_reward, form.quest_type, form.difficulty);
   const pendingSubmissionsCount = submissions.filter((submission) => submission.status === "submitted").length;
   const pendingProjectsCount = projects.filter((project) => project.status === "draft").length;
+  const pendingVerificationCount = verificationRequests.filter((request) => request.status === "submitted").length;
   const activeQuestsCount = managedQuests.filter((quest) => quest.status === "active" && !isQuestEnded(quest.ends_at)).length;
   const liveEventsCount = events.filter((event) => event.status === "active" && (!event.ends_at || !isQuestEnded(event.ends_at))).length;
   const filteredQualifiedUsers = useMemo(
@@ -366,6 +370,7 @@ export default function AdminPage() {
       setManagedQuests([]);
       setSubmissions([]);
       setQualifiedUsers([]);
+      setVerificationRequests([]);
       return;
     }
 
@@ -402,6 +407,7 @@ export default function AdminPage() {
     getManageableQuests(address).then(setManagedQuests);
     getQuestSubmissions(address).then(setSubmissions);
     getQualifiedUsers(address).then(setQualifiedUsers);
+    getProjectVerificationRequests(address).then(setVerificationRequests);
   }, [address]);
 
   useEffect(() => {
@@ -682,6 +688,44 @@ export default function AdminPage() {
     }
   }
 
+  function getLatestVerificationRequest(projectId: string) {
+    return verificationRequests.find((request) => request.project_id === projectId);
+  }
+
+  async function handleVerificationRequest(project: Project) {
+    if (!address) {
+      setMessage("Connect a project owner wallet before requesting verification.");
+      return;
+    }
+
+    const formState = verificationForms[project.id] ?? { reason: "", proof_url: "" };
+    try {
+      await requestProjectVerification(project.id, formState, address);
+      setVerificationRequests(await getProjectVerificationRequests(address));
+      setVerificationForms((current) => ({ ...current, [project.id]: { reason: "", proof_url: "" } }));
+      setMessage("Verification request submitted. Next step: join the Questora Discord when it opens and create an ownership verification ticket.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to request verification.");
+    }
+  }
+
+  async function handleVerificationReview(request: ProjectVerificationRequest, status: "approved" | "rejected") {
+    if (!address) {
+      setMessage("Connect a platform admin wallet before reviewing verification requests.");
+      return;
+    }
+
+    try {
+      await reviewProjectVerificationRequest(request.id, status, verificationReviewNotes[request.id] ?? "", address);
+      setVerificationRequests(await getProjectVerificationRequests(address));
+      setProjects(await getManageableProjects(address));
+      setVerificationReviewNotes((current) => ({ ...current, [request.id]: "" }));
+      setMessage(status === "approved" ? "Project verification approved." : "Project verification rejected.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to review verification request.");
+    }
+  }
+
   async function handleQuestStatus(questId: string, status: QuestStatus) {
     await updateQuestStatus(questId, status, address);
     setManagedQuests(await getManageableQuests(address));
@@ -901,7 +945,9 @@ export default function AdminPage() {
             <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
               <p className="text-xs font-black uppercase tracking-wider text-blue-200">Projects</p>
               <p className="mt-2 text-3xl font-black text-white">{projects.length}</p>
-              <p className="mt-1 text-xs font-semibold text-blue-200">{pendingProjectsCount} waiting review</p>
+              <p className="mt-1 text-xs font-semibold text-blue-200">
+                {pendingProjectsCount} waiting approval{adminContext?.is_platform_admin ? ` / ${pendingVerificationCount} verification` : ""}
+              </p>
             </div>
             <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
               <p className="text-xs font-black uppercase tracking-wider text-blue-200">Campaigns</p>
@@ -1168,6 +1214,75 @@ export default function AdminPage() {
         </button>
       </form>
 
+      {adminContext?.is_platform_admin ? (
+        <section className="mt-6 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-6 shadow-glow">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-black uppercase tracking-wider text-cyan-200">Verification requests</p>
+              <h2 className="mt-1 text-xl font-black text-white">Review project trust requests</h2>
+            </div>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wider text-base-blue">{pendingVerificationCount} pending</span>
+          </div>
+          <div className="mt-5 grid gap-3">
+            {verificationRequests.length === 0 ? (
+              <p className="text-blue-100">No verification requests yet.</p>
+            ) : (
+              verificationRequests.map((request) => (
+                <article key={request.id} className="rounded-lg border border-white/10 bg-white/10 p-4">
+                  <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap gap-2">
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wider text-base-blue">{request.status}</span>
+                        <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{request.project_name ?? "Project"}</span>
+                      </div>
+                      <p className="mt-3 text-sm leading-6 text-blue-100">{request.reason}</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {[request.proof_url, request.project_website_url, request.project_x_url, request.project_discord_url, request.project_telegram_url]
+                          .filter(Boolean)
+                          .map((url) => (
+                            <a key={url} href={url as string} target="_blank" rel="noreferrer" className="focus-ring inline-flex items-center gap-1 rounded-lg bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white hover:text-base-blue">
+                              <ExternalLink size={13} />
+                              Review link
+                            </a>
+                          ))}
+                      </div>
+                      {request.review_note ? <p className="mt-3 text-xs font-semibold text-blue-200">Review note: {request.review_note}</p> : null}
+                    </div>
+                    <div className="grid gap-2 lg:w-72">
+                      <textarea
+                        value={verificationReviewNotes[request.id] ?? ""}
+                        onChange={(event) => setVerificationReviewNotes((current) => ({ ...current, [request.id]: event.target.value }))}
+                        className="focus-ring min-h-20 rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-blue-200/60"
+                        placeholder="Optional review note"
+                        disabled={request.status !== "submitted"}
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleVerificationReview(request, "approved")}
+                          disabled={request.status !== "submitted"}
+                          className="focus-ring rounded-lg bg-emerald-300 px-3 py-2 text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleVerificationReview(request, "rejected")}
+                          disabled={request.status !== "submitted"}
+                          className="focus-ring rounded-lg bg-rose-300 px-3 py-2 text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      ) : null}
+
       <section className="mt-6 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
         <div className="flex items-center gap-3">
           <Pencil className="text-cyan-200" />
@@ -1375,6 +1490,68 @@ export default function AdminPage() {
                             </button>
                           </div>
                           <p className="mt-2 text-xs text-blue-200">Leave date empty for no expiry.</p>
+                        </div>
+                      ) : null}
+                      {!project.is_verified ? (
+                        <div className="rounded-lg border border-white/10 bg-white/10 p-3">
+                          <p className="text-xs font-black uppercase tracking-wider text-blue-200">Verification</p>
+                          {getLatestVerificationRequest(project.id) ? (
+                            <p className="mt-2 text-xs font-semibold text-blue-100">
+                              Latest request: <span className="font-black uppercase text-cyan-200">{getLatestVerificationRequest(project.id)?.status}</span>
+                              {getLatestVerificationRequest(project.id)?.review_note ? ` - ${getLatestVerificationRequest(project.id)?.review_note}` : ""}
+                            </p>
+                          ) : (
+                            <p className="mt-2 text-xs font-semibold text-blue-100">Request a Questora trust check for this project.</p>
+                          )}
+                          {getLatestVerificationRequest(project.id)?.status === "submitted" ? (
+                            <p className="mt-2 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-3 text-xs font-semibold leading-5 text-cyan-100">
+                              Pending team review. Discord ownership verification will be required once the official Questora Discord is live.
+                            </p>
+                          ) : null}
+                          {getLatestVerificationRequest(project.id)?.status !== "submitted" ? (
+                            <div className="mt-3 grid gap-2">
+                              <textarea
+                                value={verificationForms[project.id]?.reason ?? ""}
+                                onChange={(event) =>
+                                  setVerificationForms((current) => ({
+                                    ...current,
+                                    [project.id]: {
+                                      reason: event.target.value,
+                                      proof_url: current[project.id]?.proof_url ?? ""
+                                    }
+                                  }))
+                                }
+                                className="focus-ring min-h-20 rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-blue-200/60"
+                                placeholder="Why should this project be verified? Mention official links, community proof, or launch context."
+                              />
+                              <p className="text-xs font-semibold leading-5 text-blue-200">
+                                After submitting, join the Questora Discord when it opens and create an ownership verification ticket. We will announce the official Discord link soon.
+                              </p>
+                              <input
+                                value={verificationForms[project.id]?.proof_url ?? ""}
+                                onChange={(event) =>
+                                  setVerificationForms((current) => ({
+                                    ...current,
+                                    [project.id]: {
+                                      reason: current[project.id]?.reason ?? "",
+                                      proof_url: event.target.value
+                                    }
+                                  }))
+                                }
+                                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-blue-200/60"
+                                placeholder="Optional proof URL"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleVerificationRequest(project)}
+                                disabled={project.status !== "active"}
+                                className="focus-ring rounded-lg bg-cyan-200 px-3 py-2 text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Request verification
+                              </button>
+                              {project.status !== "active" ? <p className="text-xs font-semibold text-blue-200">Project must be approved before verification can be requested.</p> : null}
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                       <button

@@ -11,6 +11,7 @@ import { getUnreadNotificationCount } from "@/lib/quest-service";
 
 const navItems = [
   { href: "/dashboard", label: "Quests" },
+  { href: "/projects", label: "Projects" },
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/profile", label: "Profile" },
   { href: "/admin", label: "Studio" }
