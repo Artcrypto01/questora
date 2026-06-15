@@ -2,10 +2,10 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
-import { Archive, ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Download, ExternalLink, FolderPlus, Gift, Pencil, PlusCircle, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Download, ExternalLink, FolderPlus, Gift, Pencil, PlusCircle, Rocket, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
-import { addCampaignPartner, createCampaign, createEvent, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableProjects, getManageableQuests, getProjectVerificationRequests, getProjects, getQualifiedUsers, getQuestSubmissions, removeCampaignPartner, requestProjectVerification, reviewCampaignPartner, reviewProject, reviewProjectVerificationRequest, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
-import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventRewardType, Project, ProjectInput, ProjectType, ProjectVerificationRequest, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
+import { addCampaignPartner, createCampaign, createEvent, createLaunch, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableLaunches, getManageableProjects, getManageableQuests, getProjectVerificationRequests, getProjects, getQualifiedUsers, getQuestSubmissions, removeCampaignPartner, requestProjectVerification, reviewCampaignPartner, reviewProject, reviewProjectVerificationRequest, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
+import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventRewardType, LaunchType, Project, ProjectInput, ProjectLaunch, ProjectLaunchInput, ProjectType, ProjectVerificationRequest, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, fromDatetimeLocalValue, isQuestEnded, toDatetimeLocalValue } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp, difficultyLabels, getQuestXpPolicy, questTypeLabels } from "@/lib/xp-policy";
 
@@ -20,12 +20,23 @@ const eventRewardTypeLabels: Record<EventRewardType, string> = {
   whitelist: "Whitelist"
 };
 const eventRewardTypes = Object.keys(eventRewardTypeLabels) as EventRewardType[];
+const launchTypeLabels: Record<LaunchType, string> = {
+  nft_mint: "NFT mint",
+  token_launch: "Token launch",
+  beta_launch: "Beta launch",
+  game_launch: "Game launch",
+  whitelist: "Whitelist",
+  airdrop: "Airdrop",
+  other: "Other"
+};
+const launchTypes = Object.keys(launchTypeLabels) as LaunchType[];
 const questWizardSteps = ["Project", "Purpose", "Task", "Reward", "Preview"];
 const studioTabs = [
   { id: "overview", label: "Overview" },
   { id: "projects", label: "Projects" },
   { id: "campaigns", label: "Campaigns" },
   { id: "events", label: "Events" },
+  { id: "launches", label: "Launches" },
   { id: "quests", label: "Quests" },
   { id: "submissions", label: "Submissions" },
   { id: "exports", label: "Exports" }
@@ -225,6 +236,24 @@ const initialEventForm: EventInput = {
   featured_rank: null
 };
 
+const initialLaunchForm: ProjectLaunchInput = {
+  project_id: "",
+  campaign_id: null,
+  slug: "",
+  name: "",
+  description: "",
+  launch_type: "nft_mint",
+  launch_url: "",
+  price: "",
+  supply: "",
+  network: "Base",
+  cover_image_url: "",
+  starts_at: null,
+  status: "active",
+  is_featured: false,
+  featured_rank: null
+};
+
 const initialProjectForm: ProjectInput = {
   name: "",
   slug: "",
@@ -262,6 +291,7 @@ export default function AdminPage() {
   const [activeProjects, setActiveProjects] = useState<Project[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+  const [launches, setLaunches] = useState<ProjectLaunch[]>([]);
   const [managedQuests, setManagedQuests] = useState<Quest[]>([]);
   const [submissions, setSubmissions] = useState<UserQuest[]>([]);
   const [qualifiedUsers, setQualifiedUsers] = useState<QualifiedUser[]>([]);
@@ -272,6 +302,7 @@ export default function AdminPage() {
   const [projectForm, setProjectForm] = useState(initialProjectForm);
   const [campaignForm, setCampaignForm] = useState(initialCampaignForm);
   const [eventForm, setEventForm] = useState(initialEventForm);
+  const [launchForm, setLaunchForm] = useState(initialLaunchForm);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editProjectForm, setEditProjectForm] = useState(initialProjectForm);
   const [curationForms, setCurationForms] = useState<Record<string, { featured_rank: string; featured_until: string }>>({});
@@ -291,11 +322,14 @@ export default function AdminPage() {
   const selectedCampaignProject = projects.find((project) => project.id === campaignForm.project_id);
   const selectedEventProject = projects.find((project) => project.id === eventForm.project_id);
   const selectedEventCampaign = campaigns.find((campaign) => campaign.id === eventForm.campaign_id);
+  const selectedLaunchProject = projects.find((project) => project.id === launchForm.project_id);
   const projectCampaigns = campaigns.filter((campaign) => canProjectUseCampaign(form.project_id, campaign) && campaign.status !== "archived");
   const eventProjectCampaigns = campaigns.filter((campaign) => campaign.project_id === eventForm.project_id && campaign.status !== "archived");
+  const launchProjectCampaigns = campaigns.filter((campaign) => canProjectUseCampaign(launchForm.project_id, campaign) && campaign.status !== "archived");
   const canCreateQuest = Boolean(selectedProject && selectedProject.status === "active");
   const canCreateCampaign = Boolean(selectedCampaignProject && selectedCampaignProject.status === "active");
   const canCreateEvent = Boolean(selectedEventProject && selectedEventProject.status === "active" && selectedEventCampaign);
+  const canCreateLaunch = Boolean(selectedLaunchProject && selectedLaunchProject.status === "active");
   const xpPolicy = getQuestXpPolicy(form.quest_type, form.difficulty);
   const globalXpReward = calculateGlobalXp(form.xp_reward, form.quest_type, form.difficulty);
   const pendingSubmissionsCount = submissions.filter((submission) => submission.status === "submitted").length;
@@ -303,6 +337,7 @@ export default function AdminPage() {
   const pendingVerificationCount = verificationRequests.filter((request) => request.status === "submitted").length;
   const activeQuestsCount = managedQuests.filter((quest) => quest.status === "active" && !isQuestEnded(quest.ends_at)).length;
   const liveEventsCount = events.filter((event) => event.status === "active" && (!event.ends_at || !isQuestEnded(event.ends_at))).length;
+  const activeLaunchesCount = launches.filter((launch) => launch.status === "active").length;
   const filteredQualifiedUsers = useMemo(
     () =>
       qualifiedUsers.filter(
@@ -367,6 +402,7 @@ export default function AdminPage() {
       setActiveProjects([]);
       setCampaigns([]);
       setEvents([]);
+      setLaunches([]);
       setManagedQuests([]);
       setSubmissions([]);
       setQualifiedUsers([]);
@@ -390,6 +426,10 @@ export default function AdminPage() {
         ...current,
         project_id: current.project_id || projectRows[0]?.id || ""
       }));
+      setLaunchForm((current) => ({
+        ...current,
+        project_id: current.project_id || projectRows[0]?.id || ""
+      }));
     });
     getManageableCampaigns(address)
       .then((campaignRows) => {
@@ -404,6 +444,7 @@ export default function AdminPage() {
         setMessage(error instanceof Error ? error.message : "Failed to load campaigns.");
       });
     getManageableEvents(address).then(setEvents).catch(() => setEvents([]));
+    getManageableLaunches(address).then(setLaunches).catch(() => setLaunches([]));
     getManageableQuests(address).then(setManagedQuests);
     getQuestSubmissions(address).then(setSubmissions);
     getQualifiedUsers(address).then(setQualifiedUsers);
@@ -569,6 +610,14 @@ export default function AdminPage() {
     });
   }, [campaigns, eventForm.project_id]);
 
+  useEffect(() => {
+    setLaunchForm((current) => {
+      if (!current.project_id || !current.campaign_id) return current;
+      const campaignStillAvailable = campaigns.some((campaign) => campaign.id === current.campaign_id && canProjectUseCampaign(current.project_id, campaign));
+      return campaignStillAvailable ? current : { ...current, campaign_id: null };
+    });
+  }, [campaigns, launchForm.project_id]);
+
   async function handleEventSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!address) {
@@ -598,6 +647,33 @@ export default function AdminPage() {
       setMessage("Event created. It is now visible on the events section.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to create event.");
+    }
+  }
+
+  async function handleLaunchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!address) {
+      setMessage("Connect a project owner wallet before creating launches.");
+      return;
+    }
+
+    if (!canCreateLaunch) {
+      setMessage("Project is waiting for platform approval. You can create launches after it is approved.");
+      return;
+    }
+
+    try {
+      const launch = await createLaunch(launchForm, address);
+      setLaunches((current) => [launch, ...current]);
+      setLaunchForm({
+        ...initialLaunchForm,
+        project_id: launch.project_id,
+        campaign_id: null,
+        network: launchForm.network || "Base"
+      });
+      setMessage("Launch created. It is now visible on the Launches page.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to create launch.");
     }
   }
 
@@ -941,7 +1017,7 @@ export default function AdminPage() {
         </div>
       </section>
 
-          <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-6">
+          <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-7">
             <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
               <p className="text-xs font-black uppercase tracking-wider text-blue-200">Projects</p>
               <p className="mt-2 text-3xl font-black text-white">{projects.length}</p>
@@ -958,6 +1034,11 @@ export default function AdminPage() {
               <p className="text-xs font-black uppercase tracking-wider text-blue-200">Live events</p>
               <p className="mt-2 text-3xl font-black text-white">{liveEventsCount}</p>
               <p className="mt-1 text-xs font-semibold text-blue-200">{events.length} total events</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
+              <p className="text-xs font-black uppercase tracking-wider text-blue-200">Launches</p>
+              <p className="mt-2 text-3xl font-black text-white">{activeLaunchesCount}</p>
+              <p className="mt-1 text-xs font-semibold text-blue-200">{launches.length} total launch pages</p>
             </div>
             <div className="rounded-lg border border-white/10 bg-[#0b1730]/92 p-5 shadow-glow">
               <p className="text-xs font-black uppercase tracking-wider text-blue-200">Active quests</p>
@@ -2563,6 +2644,235 @@ export default function AdminPage() {
                           <Download size={16} />
                           Winners CSV
                         </button>
+                      </div>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {activeStudioTab === "launches" ? (
+        <>
+          <form onSubmit={handleLaunchSubmit} className="mt-8 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
+            <div className="flex items-center gap-3">
+              <Rocket className="text-cyan-200" />
+              <div>
+                <h2 className="text-xl font-black text-white">Create launch</h2>
+                <p className="mt-1 text-sm font-semibold text-blue-100">Publish upcoming mints, beta launches, whitelist windows, or product launches.</p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-5">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Project</span>
+                  <select
+                    required
+                    value={launchForm.project_id}
+                    onChange={(event) => setLaunchForm({ ...launchForm, project_id: event.target.value, campaign_id: null })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    <option value="">Select project</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name} - {project.status === "active" ? "active" : "waiting approval"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Launch type</span>
+                  <select
+                    value={launchForm.launch_type}
+                    onChange={(event) => setLaunchForm({ ...launchForm, launch_type: event.target.value as LaunchType })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    {launchTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {launchTypeLabels[type]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Launch name</span>
+                  <input
+                    required
+                    value={launchForm.name}
+                    onChange={(event) => setLaunchForm({ ...launchForm, name: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="Genesis mint"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Slug</span>
+                  <input
+                    value={launchForm.slug}
+                    onChange={(event) => setLaunchForm({ ...launchForm, slug: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="genesis-mint"
+                  />
+                </label>
+              </div>
+
+              <label className="grid gap-2">
+                <span className="text-sm font-bold text-blue-100">Description</span>
+                <textarea
+                  value={launchForm.description ?? ""}
+                  onChange={(event) => setLaunchForm({ ...launchForm, description: event.target.value })}
+                  className="focus-ring min-h-24 rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                  placeholder="Explain what is launching, who it is for, and why the community should pay attention."
+                />
+              </label>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Launch date</span>
+                  <input
+                    type="datetime-local"
+                    value={toDatetimeLocalValue(launchForm.starts_at)}
+                    onChange={(event) => setLaunchForm({ ...launchForm, starts_at: fromDatetimeLocalValue(event.target.value) })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Status</span>
+                  <select
+                    value={launchForm.status}
+                    onChange={(event) => setLaunchForm({ ...launchForm, status: event.target.value as QuestStatus })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    <option value="active">Active</option>
+                    <option value="draft">Draft</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Network</span>
+                  <input
+                    value={launchForm.network ?? ""}
+                    onChange={(event) => setLaunchForm({ ...launchForm, network: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="Base"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Price</span>
+                  <input
+                    value={launchForm.price ?? ""}
+                    onChange={(event) => setLaunchForm({ ...launchForm, price: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="Free, 0.02 ETH, TBA"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Supply / spots</span>
+                  <input
+                    value={launchForm.supply ?? ""}
+                    onChange={(event) => setLaunchForm({ ...launchForm, supply: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="1000 NFTs, 250 beta seats"
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Linked campaign</span>
+                  <select
+                    value={launchForm.campaign_id ?? ""}
+                    onChange={(event) => setLaunchForm({ ...launchForm, campaign_id: event.target.value || null })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white"
+                  >
+                    <option value="">No campaign</option>
+                    {launchProjectCampaigns.map((campaign) => (
+                      <option key={campaign.id} value={campaign.id}>
+                        {campaign.name}{campaign.project_id === launchForm.project_id ? "" : " (collab)"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Launch URL</span>
+                  <input
+                    value={launchForm.launch_url ?? ""}
+                    onChange={(event) => setLaunchForm({ ...launchForm, launch_url: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="https://..."
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="text-sm font-bold text-blue-100">Cover image URL</span>
+                  <input
+                    value={launchForm.cover_image_url ?? ""}
+                    onChange={(event) => setLaunchForm({ ...launchForm, cover_image_url: event.target.value })}
+                    className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
+                    placeholder="https://..."
+                  />
+                  <span className="text-xs text-blue-200">Use a direct image URL for the launch card background.</span>
+                </label>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={!canCreateLaunch}
+              className="focus-ring mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-base-blue px-5 py-3 font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+            >
+              <Rocket size={20} />
+              Create launch
+            </button>
+            {message ? <p className="mt-4 text-sm font-semibold text-cyan-200">{message}</p> : null}
+          </form>
+
+          <section className="mt-6 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
+            <div className="flex items-center gap-3">
+              <CalendarDays className="text-cyan-200" />
+              <h2 className="text-xl font-black text-white">Manage launches</h2>
+            </div>
+            <div className="mt-5 grid gap-3">
+              {!isConnected ? (
+                <p className="text-blue-100">Connect a project owner wallet to manage launches.</p>
+              ) : launches.length === 0 ? (
+                <p className="text-blue-100">No launches yet. Create one to make upcoming drops visible publicly.</p>
+              ) : (
+                launches.map((launch) => (
+                  <article key={launch.id} className="rounded-lg border border-white/10 bg-white/10 p-4">
+                    <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+                      <div>
+                        <div className="flex flex-wrap gap-2">
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-wider text-base-blue">{launch.project_name ?? "Project"}</span>
+                          <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-950">{launch.status}</span>
+                          <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">{launchTypeLabels[launch.launch_type]}</span>
+                        </div>
+                        <h3 className="mt-3 font-black text-white">{launch.name}</h3>
+                        <p className="mt-1 text-sm leading-6 text-blue-100">{launch.description || "No launch description yet."}</p>
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-blue-200">
+                          <span>/{launch.slug}</span>
+                          {launch.starts_at ? <span>Launches {formatQuestDeadline(launch.starts_at)}</span> : null}
+                          {launch.price ? <span>Price: {launch.price}</span> : null}
+                          {launch.supply ? <span>Supply: {launch.supply}</span> : null}
+                          {launch.campaign_name ? <span>Campaign: {launch.campaign_name}</span> : null}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 md:justify-end">
+                        <a href={`/launches/${encodeURIComponent(launch.slug)}`} className="focus-ring inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-black text-base-blue">
+                          View
+                        </a>
+                        {launch.campaign_id ? (
+                          <a href={`/dashboard?campaign=${encodeURIComponent(launch.campaign_id)}`} className="focus-ring inline-flex items-center gap-2 rounded-lg bg-cyan-200 px-3 py-2 text-sm font-black text-slate-950">
+                            Campaign quests
+                          </a>
+                        ) : null}
                       </div>
                     </div>
                   </article>

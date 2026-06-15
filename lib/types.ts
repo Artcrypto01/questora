@@ -290,6 +290,53 @@ export type EventStats = {
   totalXp: number;
 };
 
+export type LaunchType = "nft_mint" | "token_launch" | "beta_launch" | "game_launch" | "whitelist" | "airdrop" | "other";
+
+export type ProjectLaunch = {
+  id: string;
+  project_id: string;
+  campaign_id: string | null;
+  slug: string;
+  name: string;
+  description: string | null;
+  launch_type: LaunchType;
+  launch_url: string | null;
+  price: string | null;
+  supply: string | null;
+  network: string | null;
+  cover_image_url: string | null;
+  starts_at: string | null;
+  status: QuestStatus;
+  is_featured: boolean;
+  featured_rank: number | null;
+  created_at?: string;
+  project_name?: string;
+  project_slug?: string;
+  project_logo_url?: string | null;
+  project_type?: ProjectType;
+  project_is_verified?: boolean;
+  campaign_name?: string;
+};
+
+export type ProjectLaunchInput = Pick<
+  ProjectLaunch,
+  | "project_id"
+  | "campaign_id"
+  | "slug"
+  | "name"
+  | "description"
+  | "launch_type"
+  | "launch_url"
+  | "price"
+  | "supply"
+  | "network"
+  | "cover_image_url"
+  | "starts_at"
+  | "status"
+  | "is_featured"
+  | "featured_rank"
+>;
+
 export type NotificationType =
   | "submission_created"
   | "submission_approved"

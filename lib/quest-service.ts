@@ -1,6 +1,6 @@
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import { seedCompletions, seedProjects, seedQuests, seedUsers } from "@/lib/seed-data";
-import type { AdminContext, Campaign, CampaignInput, CampaignPartner, CampaignPartnerProject, Event, EventInput, EventStats, LeaderboardRank, Notification, NotificationType, Project, ProjectCurationInput, ProjectInput, ProjectMember, ProjectVerificationRequest, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
+import type { AdminContext, Campaign, CampaignInput, CampaignPartner, CampaignPartnerProject, Event, EventInput, EventStats, LeaderboardRank, Notification, NotificationType, Project, ProjectCurationInput, ProjectInput, ProjectLaunch, ProjectLaunchInput, ProjectMember, ProjectVerificationRequest, QualifiedUser, Quest, QuestInput, QuestSubmissionInput, UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
 import { getImageUrl, isQuestEnded, normalizeWallet, normalizeXUsername } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp } from "@/lib/xp-policy";
 
@@ -13,6 +13,7 @@ let localCampaigns: Campaign[] = [];
 let localCampaignPartners: CampaignPartner[] = [];
 let localNotifications: Notification[] = [];
 let localEvents: Event[] = [];
+let localLaunches: ProjectLaunch[] = [];
 let localVerificationRequests: ProjectVerificationRequest[] = [];
 
 function assertSupabase() {
@@ -78,6 +79,19 @@ type EventWithJoins = Event & {
     slug: string;
     logo_url?: string | null;
     project_type?: Project["project_type"];
+  } | null;
+  campaigns?: {
+    name: string;
+  } | null;
+};
+
+type LaunchWithJoins = ProjectLaunch & {
+  projects?: {
+    name: string;
+    slug: string;
+    logo_url?: string | null;
+    project_type?: Project["project_type"];
+    is_verified?: boolean;
   } | null;
   campaigns?: {
     name: string;
@@ -188,8 +202,44 @@ function mapEvent(row: EventWithJoins): Event {
   };
 }
 
+function hydrateLaunchJoins(launch: ProjectLaunch, projects = localProjects, campaigns = localCampaigns): ProjectLaunch {
+  const project = projects.find((item) => item.id === launch.project_id);
+  const campaign = launch.campaign_id ? campaigns.find((item) => item.id === launch.campaign_id) : null;
+  return {
+    ...launch,
+    project_name: launch.project_name ?? project?.name,
+    project_slug: launch.project_slug ?? project?.slug,
+    project_logo_url: launch.project_logo_url ?? project?.logo_url,
+    project_type: launch.project_type ?? project?.project_type,
+    project_is_verified: launch.project_is_verified ?? project?.is_verified,
+    campaign_name: launch.campaign_name ?? campaign?.name
+  };
+}
+
+function mapLaunch(row: LaunchWithJoins): ProjectLaunch {
+  return {
+    ...row,
+    project_name: row.projects?.name ?? row.project_name,
+    project_slug: row.projects?.slug ?? row.project_slug,
+    project_logo_url: row.projects?.logo_url ?? row.project_logo_url,
+    project_type: row.projects?.project_type ?? row.project_type,
+    project_is_verified: row.projects?.is_verified ?? row.project_is_verified,
+    campaign_name: row.campaigns?.name ?? row.campaign_name
+  };
+}
+
 function isEventVisible(event: Pick<Event, "status" | "ends_at">) {
   return event.status === "active" && (!event.ends_at || new Date(event.ends_at).getTime() > Date.now());
+}
+
+function getLaunchState(launch: Pick<ProjectLaunch, "status" | "starts_at">) {
+  if (launch.status !== "active") return launch.status;
+  if (!launch.starts_at) return "upcoming";
+  return new Date(launch.starts_at).getTime() <= Date.now() ? "live" : "upcoming";
+}
+
+function isLaunchVisible(launch: Pick<ProjectLaunch, "status">) {
+  return launch.status === "active";
 }
 
 function sortEvents(events: Event[]) {
@@ -203,6 +253,32 @@ function sortEvents(events: Event[]) {
     }
     const aDate = new Date(a.starts_at ?? a.created_at ?? 0).getTime();
     const bDate = new Date(b.starts_at ?? b.created_at ?? 0).getTime();
+    return bDate - aDate;
+  });
+}
+
+function sortLaunches(launches: ProjectLaunch[]) {
+  return [...launches].sort((a, b) => {
+    const aFeatured = a.is_featured && isLaunchVisible(a);
+    const bFeatured = b.is_featured && isLaunchVisible(b);
+    if (aFeatured !== bFeatured) return aFeatured ? -1 : 1;
+    if (aFeatured && bFeatured) {
+      const rankDiff = (a.featured_rank ?? 999) - (b.featured_rank ?? 999);
+      if (rankDiff !== 0) return rankDiff;
+    }
+
+    const aState = getLaunchState(a);
+    const bState = getLaunchState(b);
+    if (aState !== bState) {
+      if (aState === "live") return -1;
+      if (bState === "live") return 1;
+      if (aState === "upcoming") return -1;
+      if (bState === "upcoming") return 1;
+    }
+
+    const aDate = new Date(a.starts_at ?? a.created_at ?? 0).getTime();
+    const bDate = new Date(b.starts_at ?? b.created_at ?? 0).getTime();
+    if (aState === "upcoming" && bState === "upcoming") return aDate - bDate;
     return bDate - aDate;
   });
 }
@@ -1578,6 +1654,141 @@ export async function getEventLeaderboard(eventId: string, limit = 50): Promise<
   }
 
   return Array.from(rows.values()).sort((a, b) => b.total_xp - a.total_xp).slice(0, limit);
+}
+
+export async function getLaunches(limit = 24): Promise<ProjectLaunch[]> {
+  if (!hasSupabaseConfig) {
+    return sortLaunches(localLaunches.map((launch) => hydrateLaunchJoins(launch)).filter(isLaunchVisible)).slice(0, limit);
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("project_launches")
+    .select("*, projects(name, slug, logo_url, project_type, is_verified), campaigns(name)")
+    .eq("status", "active")
+    .order("is_featured", { ascending: false })
+    .order("featured_rank", { ascending: true })
+    .order("starts_at", { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+    if (message.includes("project_launches") || error.code === "42P01") return [];
+    throw new Error(formatDatabaseError(error, "Failed to load launches."));
+  }
+
+  return sortLaunches(((data ?? []) as LaunchWithJoins[]).map(mapLaunch).filter(isLaunchVisible));
+}
+
+export async function getManageableLaunches(actorWalletAddress?: string | null): Promise<ProjectLaunch[]> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context) return [];
+
+  if (!hasSupabaseConfig) {
+    return sortLaunches(localLaunches.map((launch) => hydrateLaunchJoins(launch)).filter((launch) => hasProjectAccess(context, launch.project_id)));
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("project_launches")
+    .select("*, projects(name, slug, logo_url, project_type, is_verified), campaigns(name)")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+    if (message.includes("project_launches") || error.code === "42P01") return [];
+    throw new Error(formatDatabaseError(error, "Failed to load launches."));
+  }
+
+  return sortLaunches(((data ?? []) as LaunchWithJoins[]).map(mapLaunch).filter((launch) => hasProjectAccess(context, launch.project_id)));
+}
+
+export async function createLaunch(input: ProjectLaunchInput, actorWalletAddress?: string | null): Promise<ProjectLaunch> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context || !hasProjectAccess(context, input.project_id)) {
+    throw new Error("You do not have permission to create launches for this project.");
+  }
+
+  const launchInput = {
+    ...input,
+    campaign_id: input.campaign_id || null,
+    slug: slugify(input.slug || input.name),
+    description: input.description?.trim() || null,
+    launch_url: input.launch_url?.trim() || null,
+    price: input.price?.trim() || null,
+    supply: input.supply?.trim() || null,
+    network: input.network?.trim() || null,
+    cover_image_url: getImageUrl(input.cover_image_url) || null,
+    starts_at: input.starts_at || null,
+    featured_rank: input.is_featured ? input.featured_rank : null
+  };
+
+  if (!hasSupabaseConfig) {
+    const project = localProjects.find((item) => item.id === launchInput.project_id);
+    const campaign = launchInput.campaign_id ? localCampaigns.find((item) => item.id === launchInput.campaign_id) : null;
+    if (project?.status !== "active") throw new Error("Project must be approved before launches can be created.");
+    if (launchInput.campaign_id && (!campaign || !canUseCampaignForProject(campaign, launchInput.project_id))) {
+      throw new Error("Selected campaign is not available for this project.");
+    }
+
+    const launch = hydrateLaunchJoins({
+      id: crypto.randomUUID(),
+      ...launchInput,
+      created_at: new Date().toISOString()
+    });
+    localLaunches = [launch, ...localLaunches];
+    return launch;
+  }
+
+  const client = assertSupabase();
+  const { data: project, error: projectError } = await client.from("projects").select("id, status").eq("id", launchInput.project_id).single();
+  if (projectError) throw new Error(formatDatabaseError(projectError, "Failed to load selected project."));
+  if (project.status !== "active") throw new Error("Project must be approved before launches can be created.");
+
+  if (launchInput.campaign_id) {
+    const { data: campaign, error: campaignError } = await client
+      .from("campaigns")
+      .select("id, project_id")
+      .eq("id", launchInput.campaign_id)
+      .single();
+
+    if (campaignError) throw new Error(formatDatabaseError(campaignError, "Failed to load selected campaign."));
+    const partners = await getCampaignPartnersForCampaignIds([launchInput.campaign_id]);
+    const partnerProjectIds = (partners.get(launchInput.campaign_id) ?? []).filter((partner) => partner.status === "active").map((partner) => partner.project_id);
+    if (!canUseCampaignForProject({ ...campaign, partner_project_ids: partnerProjectIds }, launchInput.project_id)) {
+      throw new Error("Selected campaign is not available for this project.");
+    }
+  }
+
+  const { data, error } = await client
+    .from("project_launches")
+    .insert(launchInput)
+    .select("*, projects(name, slug, logo_url, project_type, is_verified), campaigns(name)")
+    .single();
+
+  if (error) throw new Error(formatDatabaseError(error, "Failed to create launch. Run supabase/project-launches.sql in Supabase first."));
+  return mapLaunch(data as LaunchWithJoins);
+}
+
+export async function getLaunchBySlug(slug: string): Promise<ProjectLaunch | null> {
+  const normalizedSlug = decodeURIComponent(slug).trim().toLowerCase();
+  if (!normalizedSlug) return null;
+
+  if (!hasSupabaseConfig) {
+    const launch = localLaunches.find((item) => item.slug === normalizedSlug || item.id === normalizedSlug);
+    return launch ? hydrateLaunchJoins(launch) : null;
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("project_launches")
+    .select("*, projects(name, slug, logo_url, project_type, is_verified), campaigns(name)")
+    .eq("slug", normalizedSlug)
+    .maybeSingle();
+
+  if (error) {
+    const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+    if (message.includes("project_launches") || error.code === "42P01") return null;
+    throw error;
+  }
+  return data ? mapLaunch(data as LaunchWithJoins) : null;
 }
 
 export async function reviewProject(projectId: string, status: "active" | "archived", actorWalletAddress?: string | null) {

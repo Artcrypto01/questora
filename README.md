@@ -17,6 +17,7 @@ Questora can also support NFT whitelist campaigns, early access programs, commun
 
 - `/` landing page
 - `/dashboard` quest list and manual completion
+- `/launches` launch calendar for mints, beta launches, whitelists, and prelaunch discovery
 - `/profile` wallet profile, XP, completions, mocked badges
 - `/leaderboard` users sorted by total XP
 - `/admin` Studio for creating projects and quests
@@ -70,12 +71,15 @@ Run [supabase/project-telegram-url.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALY
 
 Run [supabase/campaign-partners.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/campaign-partners.sql>) to add collab campaigns with partner projects.
 
+Run [supabase/project-launches.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/project-launches.sql>) to add the Launch Calendar for upcoming mints, beta launches, whitelists, airdrops, and prelaunch pages.
+
 Before going live, run [supabase/pre-live-audit.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/pre-live-audit.sql>) to check platform admins, pending submissions, active quests without deadlines, and anon write policies that should be reviewed.
 
 The schema creates:
 
 - `campaigns`
 - `campaign_partners`
+- `project_launches`
 - `projects`
 - `platform_admins`
 - `project_members`
@@ -102,6 +106,7 @@ Core behavior:
 - Studio can export qualified users as CSV based on approved quest count and project XP.
 - Platform admins can manually mark projects as verified and feature up to five top campaign slots.
 - Campaign owners can invite partner projects to create collab campaigns with one shared event leaderboard. Partner owners must accept the invite before adding quests.
+- Project owners can publish Launch Calendar entries for NFT mints, token launches, beta launches, whitelists, airdrops, and other prelaunch moments.
 
 The MVP uses permissive anon RLS policies so wallet-based flows work without a custom auth server. For production, replace the write policies with wallet/session-aware server actions or Supabase auth checks.
 
@@ -122,6 +127,7 @@ project_members(id, project_id, wallet_address, role, created_at)
 users(id, wallet_address, display_name, avatar_url, x_username, discord_username, bio, created_at)
 campaigns(id, name, description, starts_at, ends_at, status, created_at)
 campaign_partners(id, campaign_id, project_id, role, status, created_at)
+project_launches(id, project_id, campaign_id, slug, name, description, launch_type, launch_url, price, supply, network, cover_image_url, starts_at, status, is_featured, featured_rank, created_at)
 quests(id, project_id, campaign_id, title, description, task_url, instructions, proof_type, proof_placeholder, proof_example, xp_reward, status, category, ends_at, created_at)
 user_quests(id, user_id, quest_id, xp_awarded, status, proof_text, proof_url, review_note, reviewed_at, completed_at)
 badges(id, name, description, image_url, created_at)
@@ -135,15 +141,16 @@ user_badges(id, user_id, badge_id, awarded_at)
 3. A member can edit their profile name, avatar, socials, and bio in `/profile`.
 4. A project owner opens the Studio (`/admin`) and creates a project.
 5. The project owner adds logo, cover image, socials, and quests linked to that project.
-6. Community users open `/dashboard`, filter by project, read the quest instructions, and submit the requested proof.
-7. The app saves each proof in `user_quests` as `submitted`.
-8. Project owners approve or reject submissions. Reject notes are shown on the user profile and the quest can be resubmitted.
-9. The `leaderboard` view calculates XP from approved quest rows.
-10. Project owners can export qualified wallet lists from Studio for whitelist, rewards, or beta access.
+6. The project owner can publish a launch page in Studio for upcoming mints, beta launches, whitelists, or airdrops.
+7. Community users open `/dashboard`, filter by project, read the quest instructions, and submit the requested proof.
+8. The app saves each proof in `user_quests` as `submitted`.
+9. Project owners approve or reject submissions. Reject notes are shown on the user profile and the quest can be resubmitted.
+10. The `leaderboard` view calculates XP from approved quest rows.
+11. Project owners can export qualified wallet lists from Studio for whitelist, rewards, or beta access.
 
 ## Production Checklist
 
-1. Run all Supabase SQL files in this order: `schema.sql`, `xp-guardrails.sql`, `quest-deadlines.sql`, `retweet-quest-type.sql`, `project-curation.sql`, `project-telegram-url.sql`, `events.sql`, `notifications-and-quest-title-scope.sql`, `campaign-partners.sql`.
+1. Run all Supabase SQL files in this order: `schema.sql`, `xp-guardrails.sql`, `quest-deadlines.sql`, `retweet-quest-type.sql`, `project-curation.sql`, `project-telegram-url.sql`, `events.sql`, `notifications-and-quest-title-scope.sql`, `campaign-partners.sql`, `project-launches.sql`.
 2. Add your platform admin wallet to `platform_admins` and `NEXT_PUBLIC_PLATFORM_ADMIN_WALLETS`.
 3. Run `pre-live-audit.sql` and review any anon write policies before opening the app publicly.
 4. Set production env vars in your host:

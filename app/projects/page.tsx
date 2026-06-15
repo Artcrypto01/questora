@@ -51,10 +51,9 @@ export default function ProjectsPage() {
       <section className="rounded-2xl border border-cyan-200/20 bg-base-blue p-6 shadow-glow sm:p-8">
         <div className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
           <div>
-            <p className="font-semibold text-cyan-200">Project directory</p>
-            <h1 className="mt-2 max-w-3xl text-4xl font-black text-white sm:text-6xl">Explore communities building with Questora</h1>
+            <h1 className="max-w-3xl text-4xl font-black text-white sm:text-6xl">Explore Questora projects</h1>
             <p className="mt-4 max-w-2xl leading-7 text-blue-100">
-              Discover verified projects, community campaigns, and active quest hubs across Questora.
+              Find verified communities, active campaigns, and project quest hubs.
             </p>
           </div>
           <div className="grid grid-cols-3 gap-3 text-center">
@@ -95,8 +94,8 @@ export default function ProjectsPage() {
         <div className="mt-10 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 text-blue-100">Loading projects...</div>
       ) : (
         <>
-          <ProjectSection title="Verified projects" eyebrow="Trusted communities" projects={verifiedProjects} emptyText="No verified projects match this filter yet." />
-          <ProjectSection title="Community projects" eyebrow="Open discovery" projects={communityProjects} emptyText="No community projects match this filter yet." />
+          <ProjectSection title="Verified projects" projects={verifiedProjects} emptyText="No verified projects match this filter yet." />
+          <ProjectSection title="Community projects" projects={communityProjects} emptyText="No community projects match this filter yet." />
         </>
       )}
     </div>
@@ -112,13 +111,12 @@ function DirectoryStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ProjectSection({ title, eyebrow, projects, emptyText }: { title: string; eyebrow: string; projects: Project[]; emptyText: string }) {
+function ProjectSection({ title, projects, emptyText }: { title: string; projects: Project[]; emptyText: string }) {
   return (
     <section className="mt-8">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm font-black uppercase tracking-wider text-cyan-200">{eyebrow}</p>
-          <h2 className="mt-1 text-2xl font-black text-white">{title}</h2>
+          <h2 className="text-2xl font-black text-white">{title}</h2>
         </div>
         <span className="text-sm font-semibold text-blue-100">{projects.length} projects</span>
       </div>
