@@ -1,15 +1,71 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { useAccount } from "wagmi";
-import { Award, BadgeCheck, Clock3, ExternalLink, Medal, Save, UserRound, Wallet } from "lucide-react";
+import { Award, BadgeCheck, Clock3, ExternalLink, ImageUp, Loader2, Medal, Save, UserRound, Wallet } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import { getOrCreateUser, getUserCompletions, updateUserProfile } from "@/lib/quest-service";
+import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import type { UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
 import { normalizeXUsername } from "@/lib/utils";
 
 const mockBadges = ["Base Starter", "Quest Sprinter", "Community Signal"];
+const avatarBucket = "avatars";
+const avatarMaxBytes = 150 * 1024;
+const avatarSize = 320;
+
+async function loadImage(file: File) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to read image."));
+    };
+    image.src = url;
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("Failed to compress image."));
+        return;
+      }
+      resolve(blob);
+    }, type, quality);
+  });
+}
+
+async function compressAvatar(file: File) {
+  const image = await loadImage(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = avatarSize;
+  canvas.height = avatarSize;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Image compression is not supported in this browser.");
+
+  const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+  const sourceX = (image.naturalWidth - sourceSize) / 2;
+  const sourceY = (image.naturalHeight - sourceSize) / 2;
+
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, avatarSize, avatarSize);
+
+  for (const quality of [0.82, 0.72, 0.62, 0.52]) {
+    const blob = await canvasToBlob(canvas, "image/webp", quality);
+    if (blob.size <= avatarMaxBytes || quality === 0.52) return blob;
+  }
+
+  throw new Error("Failed to compress image.");
+}
 
 export default function ProfilePage() {
   const { address } = useAccount();
@@ -23,6 +79,7 @@ export default function ProfilePage() {
     bio: ""
   });
   const [message, setMessage] = useState("");
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -61,6 +118,59 @@ export default function ProfilePage() {
       bio: updatedProfile.bio ?? ""
     });
     setMessage("Profile saved.");
+  }
+
+  async function handleAvatarUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !address) return;
+
+    if (!hasSupabaseConfig || !supabase) {
+      setMessage("Supabase is not configured. Use Avatar URL for local preview.");
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setMessage("Please upload an image file.");
+      return;
+    }
+
+    setUploadingAvatar(true);
+    setMessage("Compressing avatar...");
+
+    try {
+      const avatarBlob = await compressAvatar(file);
+      const wallet = address.toLowerCase();
+      const path = `${wallet}/avatar.webp`;
+      const { error: uploadError } = await supabase.storage.from(avatarBucket).upload(path, avatarBlob, {
+        cacheControl: "3600",
+        contentType: "image/webp",
+        upsert: true
+      });
+
+      if (uploadError) {
+        throw new Error(`${uploadError.message}. Make sure the avatars bucket and policies exist in Supabase.`);
+      }
+
+      const { data } = supabase.storage.from(avatarBucket).getPublicUrl(path);
+      const avatarUrl = `${data.publicUrl}?v=${Date.now()}`;
+      const nextProfileForm = { ...profileForm, avatar_url: avatarUrl };
+      setProfileForm(nextProfileForm);
+      const updatedProfile = await updateUserProfile(address, nextProfileForm);
+      setUser(updatedProfile);
+      setProfileForm({
+        display_name: updatedProfile.display_name ?? "",
+        avatar_url: updatedProfile.avatar_url ?? avatarUrl,
+        x_username: updatedProfile.x_username ?? "",
+        discord_username: updatedProfile.discord_username ?? "",
+        bio: updatedProfile.bio ?? ""
+      });
+      setMessage("Profile image updated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to upload avatar.");
+    } finally {
+      setUploadingAvatar(false);
+    }
   }
 
   const displayName = user?.display_name || (address ? "Questora member" : "Connect to create your profile");
@@ -116,14 +226,33 @@ export default function ProfilePage() {
               />
             </label>
             <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">Avatar URL</span>
+              <span className="text-sm font-bold text-blue-100">Profile image</span>
+              <div className="rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white text-base-blue">
+                    {profileForm.avatar_url ? <img src={profileForm.avatar_url} alt="" className="h-full w-full object-cover" /> : <UserRound size={28} />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-blue-100">Upload a profile image from your device.</p>
+                    <p className="mt-1 text-xs font-semibold text-blue-200">Use a clear square image so your profile looks sharp across Questora.</p>
+                  </div>
+                  <label className={`focus-ring inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-black text-base-blue transition hover:bg-cyan-100 ${!address || uploadingAvatar ? "pointer-events-none opacity-50" : ""}`}>
+                    {uploadingAvatar ? <Loader2 className="animate-spin" size={17} /> : <ImageUp size={17} />}
+                    {uploadingAvatar ? "Uploading" : "Upload"}
+                    <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="sr-only" disabled={!address || uploadingAvatar} onChange={handleAvatarUpload} />
+                  </label>
+                </div>
+              </div>
+            </label>
+            <label className="grid gap-2">
+              <span className="text-sm font-bold text-blue-100">Avatar URL fallback</span>
               <input
                 value={profileForm.avatar_url ?? ""}
                 onChange={(event) => setProfileForm({ ...profileForm, avatar_url: event.target.value })}
                 className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
                 placeholder="https://..."
               />
-              <span className="text-xs font-semibold text-cyan-200">Works best with direct image links like https://i.imgur.com/id.png</span>
+              <span className="text-xs font-semibold text-cyan-200">Prefer uploading an image above. Use this field only when you want to use an existing hosted image.</span>
             </label>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <label className="grid gap-2">

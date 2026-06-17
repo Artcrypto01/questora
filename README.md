@@ -73,6 +73,8 @@ Run [supabase/campaign-partners.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMOD
 
 Run [supabase/project-launches.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/project-launches.sql>) to add the Launch Calendar for upcoming mints, beta launches, whitelists, airdrops, and prelaunch pages.
 
+Run [supabase/avatar-storage.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/avatar-storage.sql>) to create the `avatars` Storage bucket used by profile image uploads.
+
 Before going live, run [supabase/pre-live-audit.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/pre-live-audit.sql>) to check platform admins, pending submissions, active quests without deadlines, and anon write policies that should be reviewed.
 
 The schema creates:
@@ -95,6 +97,7 @@ Core behavior:
 - Projects are created from the Studio (`/admin`) and stored in `projects`, including a project type such as NFT, Meme, AI, or DeFi.
 - The connected project creator is saved as the project owner in `project_members`.
 - `users` are created after wallet connect and can store display name, avatar, X, Discord, and bio.
+- Profile avatars can be uploaded from the Profile page. Images are resized in the browser to a small WebP and stored in Supabase Storage at `avatars/{wallet}/avatar.webp`.
 - `quests` are created under a project and fetched from Supabase.
 - Users submit quest proof into `user_quests` with `submitted` status.
 - Quests can define instructions, task link, proof type, proof placeholder, and proof example.
@@ -150,7 +153,7 @@ user_badges(id, user_id, badge_id, awarded_at)
 
 ## Production Checklist
 
-1. Run all Supabase SQL files in this order: `schema.sql`, `xp-guardrails.sql`, `quest-deadlines.sql`, `retweet-quest-type.sql`, `project-curation.sql`, `project-telegram-url.sql`, `events.sql`, `notifications-and-quest-title-scope.sql`, `campaign-partners.sql`, `project-launches.sql`.
+1. Run all Supabase SQL files in this order: `schema.sql`, `xp-guardrails.sql`, `quest-deadlines.sql`, `retweet-quest-type.sql`, `project-curation.sql`, `project-telegram-url.sql`, `events.sql`, `notifications-and-quest-title-scope.sql`, `campaign-partners.sql`, `project-launches.sql`, `avatar-storage.sql`.
 2. Add your platform admin wallet to `platform_admins` and `NEXT_PUBLIC_PLATFORM_ADMIN_WALLETS`.
 3. Run `pre-live-audit.sql` and review any anon write policies before opening the app publicly.
 4. Set production env vars in your host:
