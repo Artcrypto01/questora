@@ -244,16 +244,6 @@ export default function ProfilePage() {
                 </div>
               </div>
             </label>
-            <label className="grid gap-2">
-              <span className="text-sm font-bold text-blue-100">Avatar URL fallback</span>
-              <input
-                value={profileForm.avatar_url ?? ""}
-                onChange={(event) => setProfileForm({ ...profileForm, avatar_url: event.target.value })}
-                className="focus-ring rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-white placeholder:text-blue-200/60"
-                placeholder="https://..."
-              />
-              <span className="text-xs font-semibold text-cyan-200">Prefer uploading an image above. Use this field only when you want to use an existing hosted image.</span>
-            </label>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <label className="grid gap-2">
                 <span className="text-sm font-bold text-blue-100">X username</span>
