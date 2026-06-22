@@ -37,6 +37,7 @@ export async function GET(request: NextRequest) {
   authorizeUrl.searchParams.set("response_type", "code");
   authorizeUrl.searchParams.set("scope", "identify");
   authorizeUrl.searchParams.set("state", state);
+  authorizeUrl.searchParams.set("prompt", "consent");
 
   const response = NextResponse.redirect(authorizeUrl);
   response.cookies.set("questora_discord_state", state, {
