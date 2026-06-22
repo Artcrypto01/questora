@@ -154,6 +154,20 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(profileUrl);
     }
 
+    const { error: transferError } = await serverSupabase
+      .from("users")
+      .update({
+        discord_user_id: null,
+        discord_connected_at: null
+      })
+      .eq("discord_user_id", discordUser.id)
+      .neq("wallet_address", decodedState.wallet);
+
+    if (transferError) {
+      setDatabaseError(profileUrl, "transfer", transferError);
+      return NextResponse.redirect(profileUrl);
+    }
+
     const { error } = await serverSupabase
       .from("users")
       .update({

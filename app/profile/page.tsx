@@ -105,6 +105,12 @@ export default function ProfilePage() {
     };
 
     const databaseCode = searchParams.get("db");
+    if (status === "database_failed" && databaseCode?.endsWith(":23505")) {
+      setMessage("This Discord account was already linked to another wallet. Try connecting Discord again to move it to this wallet.");
+      window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
+
     const databaseHint = status === "database_failed" && databaseCode ? ` Code: ${databaseCode}.` : "";
     setMessage(`${messages[status] ?? "Discord connection could not be completed."}${databaseHint}`);
     window.history.replaceState({}, "", window.location.pathname);
