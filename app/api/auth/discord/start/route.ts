@@ -6,6 +6,10 @@ function encodeState(input: { wallet: string; nonce: string }) {
 }
 
 function getRequestOrigin(request: NextRequest) {
+  if (process.env.NODE_ENV === "production" && process.env.NEXT_PUBLIC_SITE_URL) {
+    return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/$/, "");
+  }
+
   const host = request.headers.get("host");
   if (!host) return request.nextUrl.origin;
   const protocol = request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(":", "");
