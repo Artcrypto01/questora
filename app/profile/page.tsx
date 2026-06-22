@@ -11,9 +11,16 @@ import type { UserProfile, UserProfileInput, UserQuest } from "@/lib/types";
 import { normalizeXUsername } from "@/lib/utils";
 
 const mockBadges = ["Base Starter", "Quest Sprinter", "Community Signal"];
+const discordInviteUrl = "https://discord.gg/Rr9sWbBuEj";
 const avatarBucket = "avatars";
 const avatarMaxBytes = 150 * 1024;
 const avatarSize = 320;
+
+type DiscordRoleResult = {
+  synced: string[];
+  removed: string[];
+  missingConfig: string[];
+} | null;
 
 async function loadImage(file: File) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -82,6 +89,7 @@ export default function ProfilePage() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [syncingDiscord, setSyncingDiscord] = useState(false);
   const [discordStatus, setDiscordStatus] = useState<string | null>(null);
+  const [discordRoleResult, setDiscordRoleResult] = useState<DiscordRoleResult>(null);
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
@@ -222,6 +230,7 @@ export default function ProfilePage() {
 
     setSyncingDiscord(true);
     setMessage("Syncing Discord roles...");
+    setDiscordRoleResult(null);
 
     try {
       const response = await fetch("/api/discord/sync", {
@@ -235,7 +244,12 @@ export default function ProfilePage() {
         throw new Error(result.error ?? "Discord role sync failed.");
       }
 
-      const synced = result.synced?.length ? result.synced.join(", ") : "no new roles";
+      setDiscordRoleResult({
+        synced: result.synced ?? [],
+        removed: result.removed ?? [],
+        missingConfig: result.missingConfig ?? []
+      });
+      const synced = result.synced?.length ? result.synced.join(", ") : "no active roles";
       setMessage(`Discord roles synced: ${synced}.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Discord role sync failed.");
@@ -372,6 +386,15 @@ export default function ProfilePage() {
                 </p>
                 <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                   <a
+                    href={discordInviteUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="focus-ring inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-200/30 bg-cyan-200/10 px-4 py-3 text-sm font-black text-cyan-100 transition hover:bg-cyan-200 hover:text-slate-950"
+                  >
+                    <Bot size={17} />
+                    Join Discord
+                  </a>
+                  <a
                     href={address ? `/api/auth/discord/start?wallet=${encodeURIComponent(address)}` : "#"}
                     className={`focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-black text-base-blue transition hover:bg-cyan-100 ${!address ? "pointer-events-none opacity-50" : ""}`}
                   >
@@ -389,6 +412,32 @@ export default function ProfilePage() {
                   </button>
                 </div>
                 <p className="mt-3 text-xs font-semibold leading-5 text-blue-200">Join the Questora Discord server before syncing roles.</p>
+                {discordRoleResult ? (
+                  <div className="mt-4 rounded-lg border border-white/10 bg-white/10 p-3">
+                    <p className="text-xs font-black uppercase tracking-wider text-cyan-200">Role sync status</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {discordRoleResult.synced.length > 0 ? (
+                        discordRoleResult.synced.map((role) => (
+                          <span key={role} className="rounded-full bg-emerald-300 px-3 py-1 text-xs font-black text-slate-950">
+                            {role}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-blue-100">No active roles yet</span>
+                      )}
+                      {discordRoleResult.removed.map((role) => (
+                        <span key={role} className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-blue-100">
+                          {role}
+                        </span>
+                      ))}
+                    </div>
+                    {discordRoleResult.missingConfig.length > 0 ? (
+                      <p className="mt-3 text-xs font-semibold leading-5 text-amber-200">
+                        Missing Discord role setup: {discordRoleResult.missingConfig.join(", ")}.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
                 {message ? <p className="mt-3 rounded-lg border border-white/10 bg-white/10 p-3 text-xs font-bold leading-5 text-cyan-100">{message}</p> : null}
               </div>
             </div>
