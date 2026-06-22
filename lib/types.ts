@@ -39,6 +39,8 @@ export type UserProfile = {
   avatar_url: string | null;
   x_username: string | null;
   discord_username: string | null;
+  discord_user_id?: string | null;
+  discord_connected_at?: string | null;
   bio: string | null;
   total_xp: number;
   completed_quests?: number;
@@ -154,14 +156,19 @@ export type QuestInput = Pick<
   | "ends_at"
 >;
 
-export type ProjectMemberRole = "owner" | "admin" | "reviewer";
+export type ProjectMemberRole = "owner" | "community_manager";
+export type ProjectMemberStatus = "pending" | "active" | "rejected";
 
 export type ProjectMember = {
   id: string;
   project_id: string;
   wallet_address: string;
   role: ProjectMemberRole;
+  status: ProjectMemberStatus;
   created_at?: string;
+  project_name?: string;
+  project_slug?: string;
+  project_logo_url?: string | null;
 };
 
 export type PlatformAdmin = {
@@ -345,7 +352,10 @@ export type NotificationType =
   | "project_rejected"
   | "campaign_partner_invited"
   | "campaign_partner_accepted"
-  | "campaign_partner_rejected";
+  | "campaign_partner_rejected"
+  | "project_team_invited"
+  | "project_team_accepted"
+  | "project_team_rejected";
 
 export type Notification = {
   id: string;

@@ -45,6 +45,15 @@ NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your-walletconnect-project-id
 NEXT_PUBLIC_PLATFORM_ADMIN_WALLETS=0xyourwalletaddress
+DISCORD_CLIENT_ID=your-discord-client-id
+DISCORD_CLIENT_SECRET=your-discord-client-secret
+DISCORD_BOT_TOKEN=your-discord-bot-token
+DISCORD_GUILD_ID=your-discord-server-id
+DISCORD_ROLE_VERIFIED_EXPLORER=role-id
+DISCORD_ROLE_GENESIS_EXPLORER=role-id
+DISCORD_ROLE_TOP_EXPLORER=role-id
+DISCORD_ROLE_PROJECT_OWNER=role-id
+DISCORD_ROLE_COMMUNITY_MANAGER=role-id
 ```
 
 Run the app:
@@ -75,6 +84,10 @@ Run [supabase/project-launches.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODE
 
 Run [supabase/avatar-storage.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/avatar-storage.sql>) to create the `avatars` Storage bucket used by profile image uploads.
 
+Run [supabase/project-team-members.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/project-team-members.sql>) to add Community Manager invites for project teams.
+
+Run [supabase/discord-integration.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/discord-integration.sql>) to add Discord account linking fields.
+
 Before going live, run [supabase/pre-live-audit.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/pre-live-audit.sql>) to check platform admins, pending submissions, active quests without deadlines, and anon write policies that should be reviewed.
 
 The schema creates:
@@ -96,7 +109,9 @@ Core behavior:
 
 - Projects are created from the Studio (`/admin`) and stored in `projects`, including a project type such as NFT, Meme, AI, or DeFi.
 - The connected project creator is saved as the project owner in `project_members`.
+- Project owners can invite Community Managers by wallet. Invites must be accepted by the invited wallet before they can help manage the project.
 - `users` are created after wallet connect and can store display name, avatar, X, Discord, and bio.
+- Users can connect Discord from Profile and sync Questora server roles with the Discord bot.
 - Profile avatars can be uploaded from the Profile page. Images are resized in the browser to a small WebP and stored in Supabase Storage at `avatars/{wallet}/avatar.webp`.
 - `quests` are created under a project and fetched from Supabase.
 - Users submit quest proof into `user_quests` with `submitted` status.
@@ -116,7 +131,7 @@ The MVP uses permissive anon RLS policies so wallet-based flows work without a c
 Admin access in the app is wallet-gated:
 
 - Wallets in `NEXT_PUBLIC_PLATFORM_ADMIN_WALLETS` or `platform_admins` can manage all projects and submissions.
-- Project owners/admins/reviewers in `project_members` can manage only their project.
+- Project owners and accepted Community Managers in `project_members` can manage only their project.
 - Normal users can submit proof but should not see review actions for projects they do not own.
 
 Seed data is included at the bottom of [supabase/schema.sql](</D:/DEVELOPMENT/Project/WEB CODEX/ZEALYMODEL/supabase/schema.sql>).
@@ -126,8 +141,8 @@ For reference, the main table shape is:
 ```sql
 projects(id, name, slug, description, project_type, owner_wallet_address, logo_url, cover_image_url, website_url, discord_url, telegram_url, x_url, status, created_at)
 platform_admins(id, wallet_address, created_at)
-project_members(id, project_id, wallet_address, role, created_at)
-users(id, wallet_address, display_name, avatar_url, x_username, discord_username, bio, created_at)
+project_members(id, project_id, wallet_address, role, status, created_at)
+users(id, wallet_address, display_name, avatar_url, x_username, discord_username, discord_user_id, discord_connected_at, bio, created_at)
 campaigns(id, name, description, starts_at, ends_at, status, created_at)
 campaign_partners(id, campaign_id, project_id, role, status, created_at)
 project_launches(id, project_id, campaign_id, slug, name, description, launch_type, launch_url, price, supply, network, cover_image_url, starts_at, status, is_featured, featured_rank, created_at)

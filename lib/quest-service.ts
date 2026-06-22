@@ -98,6 +98,14 @@ type LaunchWithJoins = ProjectLaunch & {
   } | null;
 };
 
+type ProjectMemberWithProject = ProjectMember & {
+  projects?: {
+    name: string;
+    slug: string;
+    logo_url?: string | null;
+  } | null;
+};
+
 function sumCompletedQuestXp(rows: UserQuestWithQuest[]) {
   return rows.reduce((total, row) => total + (row.quests?.global_xp_reward ?? row.global_xp_awarded ?? row.quests?.xp_reward ?? row.xp_awarded ?? 0), 0);
 }
@@ -123,6 +131,44 @@ function getConfiguredPlatformAdmins() {
 
 function hasProjectAccess(context: AdminContext, projectId?: string | null) {
   return Boolean(projectId && (context.is_platform_admin || context.project_ids.includes(projectId)));
+}
+
+function getLocalProjectMember(walletAddress: string, projectId?: string | null) {
+  return localProjectMembers.find((member) => member.wallet_address === walletAddress && member.project_id === projectId && member.status === "active");
+}
+
+async function getProjectMemberRole(walletAddress?: string | null, projectId?: string | null): Promise<ProjectMember["role"] | null> {
+  if (!walletAddress || !projectId) return null;
+  const wallet = normalizeWallet(walletAddress);
+
+  if (!hasSupabaseConfig) {
+    const project = localProjects.find((item) => item.id === projectId);
+    if (project?.owner_wallet_address === wallet) return "owner";
+    return getLocalProjectMember(wallet, projectId)?.role ?? null;
+  }
+
+  const client = assertSupabase();
+  const { data: project, error: projectError } = await client.from("projects").select("owner_wallet_address").eq("id", projectId).maybeSingle();
+  if (projectError) throw projectError;
+  if (project?.owner_wallet_address === wallet) return "owner";
+
+  const { data: member, error: memberError } = await client.from("project_members").select("role, status").eq("project_id", projectId).eq("wallet_address", wallet).maybeSingle();
+  if (memberError) {
+    if (isMissingProjectMemberStatus(memberError)) {
+      const { data: legacyMember, error: legacyError } = await client.from("project_members").select("role").eq("project_id", projectId).eq("wallet_address", wallet).maybeSingle();
+      if (legacyError) throw legacyError;
+      return (legacyMember?.role as ProjectMember["role"] | undefined) ?? null;
+    }
+    throw memberError;
+  }
+  return member?.status === "active" ? (member.role as ProjectMember["role"]) : null;
+}
+
+async function hasProjectOwnerAccess(actorWalletAddress?: string | null, projectId?: string | null) {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context || !projectId) return false;
+  if (context.is_platform_admin) return true;
+  return (await getProjectMemberRole(actorWalletAddress, projectId)) === "owner";
 }
 
 function toCampaignPartnerProject(project: Project): CampaignPartnerProject {
@@ -225,6 +271,26 @@ function mapLaunch(row: LaunchWithJoins): ProjectLaunch {
     project_type: row.projects?.project_type ?? row.project_type,
     project_is_verified: row.projects?.is_verified ?? row.project_is_verified,
     campaign_name: row.campaigns?.name ?? row.campaign_name
+  };
+}
+
+function hydrateProjectMember(member: ProjectMember): ProjectMember {
+  const project = localProjects.find((item) => item.id === member.project_id);
+  return {
+    ...member,
+    project_name: member.project_name ?? project?.name,
+    project_slug: member.project_slug ?? project?.slug,
+    project_logo_url: member.project_logo_url ?? project?.logo_url
+  };
+}
+
+function mapProjectMember(row: ProjectMemberWithProject): ProjectMember {
+  return {
+    ...row,
+    status: row.status ?? "active",
+    project_name: row.projects?.name ?? row.project_name,
+    project_slug: row.projects?.slug ?? row.project_slug,
+    project_logo_url: row.projects?.logo_url ?? row.project_logo_url
   };
 }
 
@@ -338,6 +404,11 @@ function isMissingNotificationsTable(error: { code?: string; message?: string; d
   return error.code === "42P01" || message.includes("relation") && message.includes("notifications") && message.includes("does not exist");
 }
 
+function isMissingProjectMemberStatus(error: { code?: string; message?: string; details?: string }) {
+  const message = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+  return (error.code === "42703" || error.code === "PGRST204" || message.includes("schema cache")) && message.includes("project_members") && message.includes("status");
+}
+
 async function createNotification(input: {
   recipient_wallet_address?: string | null;
   type: NotificationType;
@@ -392,20 +463,25 @@ async function getProjectNotificationRecipients(projectId?: string | null) {
 
   if (!hasSupabaseConfig) {
     const project = localProjects.find((item) => item.id === projectId);
-    const memberWallets = localProjectMembers.filter((member) => member.project_id === projectId).map((member) => member.wallet_address);
+    const memberWallets = localProjectMembers.filter((member) => member.project_id === projectId && member.status === "active").map((member) => member.wallet_address);
     return [project?.owner_wallet_address, ...memberWallets].filter(Boolean) as string[];
   }
 
   const client = assertSupabase();
-  const [{ data: project, error: projectError }, { data: members, error: memberError }] = await Promise.all([
-    client.from("projects").select("owner_wallet_address").eq("id", projectId).maybeSingle(),
-    client.from("project_members").select("wallet_address").eq("project_id", projectId)
-  ]);
-
+  const { data: project, error: projectError } = await client.from("projects").select("owner_wallet_address").eq("id", projectId).maybeSingle();
   if (projectError) throw projectError;
-  if (memberError) throw memberError;
 
-  return [project?.owner_wallet_address, ...(members ?? []).map((member) => member.wallet_address)].filter(Boolean) as string[];
+  const { data: members, error: memberError } = await client.from("project_members").select("wallet_address, status").eq("project_id", projectId);
+  if (memberError) {
+    if (isMissingProjectMemberStatus(memberError)) {
+      const { data: legacyMembers, error: legacyError } = await client.from("project_members").select("wallet_address").eq("project_id", projectId);
+      if (legacyError) throw legacyError;
+      return [project?.owner_wallet_address, ...(legacyMembers ?? []).map((member) => member.wallet_address)].filter(Boolean) as string[];
+    }
+    throw memberError;
+  }
+
+  return [project?.owner_wallet_address, ...(members ?? []).filter((member) => member.status === "active").map((member) => member.wallet_address)].filter(Boolean) as string[];
 }
 
 async function notifyProjectSubmission(user: UserProfile, quest: Quest) {
@@ -420,6 +496,49 @@ async function notifyProjectSubmission(user: UserProfile, quest: Quest) {
 
 function shortWallet(walletAddress: string) {
   return `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
+}
+
+async function resolveUserWalletIdentifier(identifier: string): Promise<string> {
+  const value = identifier.trim();
+  const normalizedWallet = normalizeWallet(value);
+  if (normalizedWallet.startsWith("0x")) return normalizedWallet;
+
+  const normalizedUsername = normalizeXUsername(value);
+  if (!normalizedUsername) throw new Error("Enter a wallet address or Questora username.");
+
+  if (!hasSupabaseConfig) {
+    const matches = localUsers.filter((user) => {
+      const xUsername = normalizeXUsername(user.x_username);
+      const discordUsername = normalizeXUsername(user.discord_username);
+      const displayName = normalizeXUsername(user.display_name);
+      return xUsername === normalizedUsername || discordUsername === normalizedUsername || displayName === normalizedUsername;
+    });
+
+    if (matches.length === 0) throw new Error("No Questora profile found for that username.");
+    if (matches.length > 1) throw new Error("More than one profile matches that name. Use the wallet address or X username.");
+    return matches[0].wallet_address;
+  }
+
+  const client = assertSupabase();
+  const candidates = Array.from(new Set([normalizedUsername, `@${normalizedUsername}`, value]));
+  const matches = new Map<string, string>();
+
+  for (const candidate of candidates) {
+    const { data, error } = await client
+      .from("users")
+      .select("wallet_address")
+      .or(`x_username.ilike.${candidate},discord_username.ilike.${candidate},display_name.ilike.${candidate}`)
+      .limit(2);
+
+    if (error) throw new Error(formatDatabaseError(error, "Failed to look up that username."));
+    for (const row of data ?? []) {
+      matches.set(row.wallet_address, row.wallet_address);
+    }
+  }
+
+  if (matches.size === 0) throw new Error("No Questora profile found for that username.");
+  if (matches.size > 1) throw new Error("More than one profile matches that name. Use the wallet address or X username.");
+  return Array.from(matches.values())[0];
 }
 
 function readJoinedObject<T>(value: T | T[] | null | undefined): T | null {
@@ -693,7 +812,7 @@ export async function getAdminContext(walletAddress?: string | null): Promise<Ad
 
   if (!hasSupabaseConfig) {
     const ownedProjectIds = localProjects.filter((project) => project.owner_wallet_address === wallet).map((project) => project.id);
-    const memberProjectIds = localProjectMembers.filter((member) => member.wallet_address === wallet).map((member) => member.project_id);
+    const memberProjectIds = localProjectMembers.filter((member) => member.wallet_address === wallet && member.status === "active").map((member) => member.project_id);
 
     return {
       wallet_address: wallet,
@@ -703,20 +822,32 @@ export async function getAdminContext(walletAddress?: string | null): Promise<Ad
   }
 
   const client = assertSupabase();
-  const [{ data: platformAdmin, error: platformError }, { data: projects, error: projectsError }, { data: members, error: membersError }] =
-    await Promise.all([
-      client.from("platform_admins").select("id").eq("wallet_address", wallet).maybeSingle(),
-      client.from("projects").select("id").eq("owner_wallet_address", wallet),
-      client.from("project_members").select("project_id").eq("wallet_address", wallet)
-    ]);
+  const [{ data: platformAdmin, error: platformError }, { data: projects, error: projectsError }] = await Promise.all([
+    client.from("platform_admins").select("id").eq("wallet_address", wallet).maybeSingle(),
+    client.from("projects").select("id").eq("owner_wallet_address", wallet)
+  ]);
 
   if (platformError) throw platformError;
   if (projectsError) throw projectsError;
-  if (membersError) throw membersError;
+
+  const { data: members, error: membersError } = await client.from("project_members").select("project_id, status").eq("wallet_address", wallet);
+  let memberProjectIds: string[] = [];
+
+  if (membersError) {
+    if (isMissingProjectMemberStatus(membersError)) {
+      const { data: legacyMembers, error: legacyError } = await client.from("project_members").select("project_id").eq("wallet_address", wallet);
+      if (legacyError) throw legacyError;
+      memberProjectIds = (legacyMembers ?? []).map((member) => member.project_id);
+    } else {
+      throw membersError;
+    }
+  } else {
+    memberProjectIds = (members ?? []).filter((member) => member.status === "active").map((member) => member.project_id);
+  }
 
   const projectIds = [
     ...((projects ?? []).map((project) => project.id)),
-    ...((members ?? []).map((member) => member.project_id))
+    ...memberProjectIds
   ];
 
   return {
@@ -825,7 +956,8 @@ export async function createProject(input: ProjectInput): Promise<Project> {
           id: crypto.randomUUID(),
           project_id: project.id,
           wallet_address: project.owner_wallet_address,
-          role: "owner"
+          role: "owner",
+          status: "active"
         },
         ...localProjectMembers
       ];
@@ -841,18 +973,29 @@ export async function createProject(input: ProjectInput): Promise<Project> {
     const { error: memberError } = await client.from("project_members").insert({
       project_id: data.id,
       wallet_address: data.owner_wallet_address,
-      role: "owner"
+      role: "owner",
+      status: "active"
     });
 
-    if (memberError) throw memberError;
+    if (memberError) {
+      if (isMissingProjectMemberStatus(memberError)) {
+        const { error: legacyMemberError } = await client.from("project_members").insert({
+          project_id: data.id,
+          wallet_address: data.owner_wallet_address,
+          role: "owner"
+        });
+        if (legacyMemberError) throw legacyMemberError;
+      } else {
+        throw memberError;
+      }
+    }
   }
 
   return data;
 }
 
 export async function updateProject(projectId: string, input: ProjectInput, actorWalletAddress?: string | null): Promise<Project> {
-  const context = await getAdminContext(actorWalletAddress);
-  if (!context || !hasProjectAccess(context, projectId)) {
+  if (!(await hasProjectOwnerAccess(actorWalletAddress, projectId))) {
     throw new Error("You do not have permission to edit this project.");
   }
 
@@ -890,6 +1033,154 @@ export async function updateProject(projectId: string, input: ProjectInput, acto
   const { data, error } = await assertSupabase().from("projects").update(projectInput).eq("id", projectId).select("*").single();
   if (error) throw error;
   return data;
+}
+
+export async function getProjectTeamMembers(actorWalletAddress?: string | null): Promise<ProjectMember[]> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context) return [];
+
+  if (!hasSupabaseConfig) {
+    return localProjectMembers
+      .map(hydrateProjectMember)
+      .filter((member) => context.is_platform_admin || context.project_ids.includes(member.project_id) || member.wallet_address === context.wallet_address)
+      .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
+  }
+
+  const { data, error } = await assertSupabase()
+    .from("project_members")
+    .select("*, projects(name, slug, logo_url)")
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(formatDatabaseError(error, "Failed to load project team members. Run supabase/project-team-members.sql in Supabase first."));
+
+  return ((data ?? []) as ProjectMemberWithProject[])
+    .map(mapProjectMember)
+    .filter((member) => context.is_platform_admin || context.project_ids.includes(member.project_id) || member.wallet_address === context.wallet_address);
+}
+
+export async function inviteCommunityManager(projectId: string, walletAddress: string, actorWalletAddress?: string | null): Promise<ProjectMember> {
+  if (!(await hasProjectOwnerAccess(actorWalletAddress, projectId))) {
+    throw new Error("Only the project owner can invite community managers.");
+  }
+
+  const wallet = await resolveUserWalletIdentifier(walletAddress);
+
+  if (!hasSupabaseConfig) {
+    const project = localProjects.find((item) => item.id === projectId);
+    if (!project) throw new Error("Project not found.");
+    if (project.owner_wallet_address === wallet) throw new Error("Project owner is already on the team.");
+
+    const member: ProjectMember = hydrateProjectMember({
+      id: crypto.randomUUID(),
+      project_id: projectId,
+      wallet_address: wallet,
+      role: "community_manager",
+      status: "pending",
+      created_at: new Date().toISOString()
+    });
+    localProjectMembers = [member, ...localProjectMembers.filter((item) => !(item.project_id === projectId && item.wallet_address === wallet))];
+    await createNotification({
+      recipient_wallet_address: wallet,
+      type: "project_team_invited",
+      title: "Team invite",
+      body: `You were invited to join ${project.name} as Community Manager.`,
+      href: "/admin?tab=projects"
+    });
+    return member;
+  }
+
+  const client = assertSupabase();
+  const { data: project, error: projectError } = await client.from("projects").select("name, owner_wallet_address").eq("id", projectId).single();
+  if (projectError) throw new Error(formatDatabaseError(projectError, "Failed to load selected project."));
+  if (project.owner_wallet_address === wallet) throw new Error("Project owner is already on the team.");
+
+  const { data, error } = await client
+    .from("project_members")
+    .upsert({ project_id: projectId, wallet_address: wallet, role: "community_manager", status: "pending" }, { onConflict: "project_id,wallet_address" })
+    .select("*, projects(name, slug, logo_url)")
+    .single();
+
+  if (error) throw new Error(formatDatabaseError(error, "Failed to invite community manager. Run supabase/project-team-members.sql in Supabase first."));
+
+  await createNotification({
+    recipient_wallet_address: wallet,
+    type: "project_team_invited",
+    title: "Team invite",
+    body: `You were invited to join ${project.name} as Community Manager.`,
+    href: "/admin?tab=projects"
+  });
+
+  return mapProjectMember(data as ProjectMemberWithProject);
+}
+
+export async function reviewProjectTeamInvite(memberId: string, status: "active" | "rejected", actorWalletAddress?: string | null): Promise<ProjectMember> {
+  if (!actorWalletAddress) throw new Error("Connect the invited wallet before reviewing this team invite.");
+  const wallet = normalizeWallet(actorWalletAddress);
+
+  if (!hasSupabaseConfig) {
+    const member = localProjectMembers.find((item) => item.id === memberId);
+    if (!member) throw new Error("Team invite not found.");
+    if (member.wallet_address !== wallet) throw new Error("Only the invited wallet can review this invite.");
+    localProjectMembers = localProjectMembers.map((item) => (item.id === memberId ? { ...item, status } : item));
+    const updated = hydrateProjectMember({ ...member, status });
+    const project = localProjects.find((item) => item.id === member.project_id);
+    await createNotification({
+      recipient_wallet_address: project?.owner_wallet_address,
+      type: status === "active" ? "project_team_accepted" : "project_team_rejected",
+      title: status === "active" ? "Team invite accepted" : "Team invite rejected",
+      body: `${shortWallet(wallet)} ${status === "active" ? "accepted" : "rejected"} the Community Manager invite for ${project?.name ?? "your project"}.`,
+      href: "/admin?tab=projects"
+    });
+    return updated;
+  }
+
+  const client = assertSupabase();
+  const { data: existing, error: lookupError } = await client
+    .from("project_members")
+    .select("*, projects(name, slug, logo_url, owner_wallet_address)")
+    .eq("id", memberId)
+    .single();
+
+  if (lookupError) throw new Error(formatDatabaseError(lookupError, "Failed to load team invite."));
+  const existingMember = existing as ProjectMemberWithProject & { projects?: { owner_wallet_address?: string | null; name: string; slug: string; logo_url?: string | null } | null };
+  if (existingMember.wallet_address !== wallet) throw new Error("Only the invited wallet can review this invite.");
+
+  const { data, error } = await client
+    .from("project_members")
+    .update({ status })
+    .eq("id", memberId)
+    .select("*, projects(name, slug, logo_url)")
+    .single();
+
+  if (error) throw new Error(formatDatabaseError(error, "Failed to update team invite."));
+
+  await createNotification({
+    recipient_wallet_address: existingMember.projects?.owner_wallet_address,
+    type: status === "active" ? "project_team_accepted" : "project_team_rejected",
+    title: status === "active" ? "Team invite accepted" : "Team invite rejected",
+    body: `${shortWallet(wallet)} ${status === "active" ? "accepted" : "rejected"} the Community Manager invite for ${existingMember.projects?.name ?? "your project"}.`,
+    href: "/admin?tab=projects"
+  });
+
+  return mapProjectMember(data as ProjectMemberWithProject);
+}
+
+export async function removeProjectTeamMember(memberId: string, actorWalletAddress?: string | null) {
+  const members = await getProjectTeamMembers(actorWalletAddress);
+  const member = members.find((item) => item.id === memberId);
+  if (!member) throw new Error("Team member not found.");
+  if (member.role === "owner") throw new Error("Project owner cannot be removed from the team.");
+  if (!(await hasProjectOwnerAccess(actorWalletAddress, member.project_id))) {
+    throw new Error("Only the project owner can remove community managers.");
+  }
+
+  if (!hasSupabaseConfig) {
+    localProjectMembers = localProjectMembers.filter((item) => item.id !== memberId);
+    return;
+  }
+
+  const { error } = await assertSupabase().from("project_members").delete().eq("id", memberId);
+  if (error) throw new Error(formatDatabaseError(error, "Failed to remove team member."));
 }
 
 export async function updateProjectCuration(projectId: string, input: ProjectCurationInput, actorWalletAddress?: string | null): Promise<Project> {
@@ -990,8 +1281,8 @@ export async function requestProjectVerification(projectId: string, input: { rea
   }
 
   const reason = input.reason.trim();
-  if (reason.length < 20) {
-    throw new Error("Add a short reason with at least 20 characters.");
+  if (reason.length < 8) {
+    throw new Error("Add a short reason for the verification request.");
   }
 
   const requestInput = {
@@ -1065,6 +1356,15 @@ export async function reviewProjectVerificationRequest(requestId: string, status
     }
     const updated = localVerificationRequests.find((item) => item.id === requestId) as ProjectVerificationRequest;
     const project = localProjects.find((item) => item.id === updated.project_id);
+    await createNotifications(await getProjectNotificationRecipients(updated.project_id), {
+      type: status === "approved" ? "project_approved" : "project_rejected",
+      title: status === "approved" ? "Project verified" : "Verification request rejected",
+      body:
+        status === "approved"
+          ? `${project?.name ?? "Your project"} is now verified on Questora.`
+          : `${project?.name ?? "Your project"} verification was rejected.${reviewNote.trim() ? ` ${reviewNote.trim()}` : ""}`,
+      href: "/admin?tab=projects"
+    });
     return mapVerificationRequest({ ...updated, projects: project ?? null });
   }
 
@@ -1090,7 +1390,18 @@ export async function reviewProjectVerificationRequest(requestId: string, status
     if (projectError) throw new Error(formatDatabaseError(projectError, "Failed to verify project."));
   }
 
-  return mapVerificationRequest(data as VerificationRequestWithProject);
+  const mappedRequest = mapVerificationRequest(data as VerificationRequestWithProject);
+  await createNotifications(await getProjectNotificationRecipients(request.project_id), {
+    type: status === "approved" ? "project_approved" : "project_rejected",
+    title: status === "approved" ? "Project verified" : "Verification request rejected",
+    body:
+      status === "approved"
+        ? `${mappedRequest.project_name ?? "Your project"} is now verified on Questora.`
+        : `${mappedRequest.project_name ?? "Your project"} verification was rejected.${reviewNote.trim() ? ` ${reviewNote.trim()}` : ""}`,
+    href: "/admin?tab=projects"
+  });
+
+  return mappedRequest;
 }
 
 type CampaignPartnerWithProject = CampaignPartner & {

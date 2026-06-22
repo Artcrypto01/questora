@@ -35,7 +35,8 @@ create table if not exists public.project_members (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
   wallet_address text not null,
-  role text not null default 'reviewer' check (role in ('owner', 'admin', 'reviewer')),
+  role text not null default 'community_manager' check (role in ('owner', 'community_manager')),
+  status text not null default 'active' check (status in ('pending', 'active', 'rejected')),
   created_at timestamptz not null default now(),
   unique (project_id, wallet_address),
   constraint project_members_wallet_lowercase check (wallet_address = lower(wallet_address))
@@ -151,6 +152,8 @@ create table if not exists public.users (
   avatar_url text,
   x_username text,
   discord_username text,
+  discord_user_id text unique,
+  discord_connected_at timestamptz,
   bio text,
   created_at timestamptz not null default now(),
   constraint users_wallet_lowercase check (wallet_address = lower(wallet_address))
@@ -160,7 +163,12 @@ alter table public.users add column if not exists display_name text;
 alter table public.users add column if not exists avatar_url text;
 alter table public.users add column if not exists x_username text;
 alter table public.users add column if not exists discord_username text;
+alter table public.users add column if not exists discord_user_id text;
+alter table public.users add column if not exists discord_connected_at timestamptz;
 alter table public.users add column if not exists bio text;
+create unique index if not exists users_discord_user_id_key
+  on public.users (discord_user_id)
+  where discord_user_id is not null;
 
 create table if not exists public.quests (
   id uuid primary key default gen_random_uuid(),
@@ -299,7 +307,7 @@ create table if not exists public.notifications (
 alter table public.notifications drop constraint if exists notifications_type_check;
 alter table public.notifications
   add constraint notifications_type_check
-  check (type in ('submission_created', 'submission_approved', 'submission_rejected', 'project_approved', 'project_rejected', 'campaign_partner_invited', 'campaign_partner_accepted', 'campaign_partner_rejected'));
+  check (type in ('submission_created', 'submission_approved', 'submission_rejected', 'project_approved', 'project_rejected', 'campaign_partner_invited', 'campaign_partner_accepted', 'campaign_partner_rejected', 'project_team_invited', 'project_team_accepted', 'project_team_rejected'));
 
 create index if not exists notifications_recipient_created_idx on public.notifications (recipient_wallet_address, created_at desc);
 create index if not exists notifications_recipient_unread_idx on public.notifications (recipient_wallet_address, read_at) where read_at is null;
@@ -313,6 +321,8 @@ select
   u.avatar_url,
   u.x_username,
   u.discord_username,
+  u.discord_user_id,
+  u.discord_connected_at,
   u.bio,
   coalesce(sum(q.global_xp_reward), 0)::integer as total_xp,
   count(uq.id)::integer as completed_quests,
@@ -320,7 +330,7 @@ select
 from public.users u
 left join public.user_quests uq on uq.user_id = u.id and uq.status = 'approved' and uq.reviewed_at is not null
 left join public.quests q on q.id = uq.quest_id
-group by u.id, u.wallet_address, u.display_name, u.avatar_url, u.x_username, u.discord_username, u.bio, u.created_at;
+group by u.id, u.wallet_address, u.display_name, u.avatar_url, u.x_username, u.discord_username, u.discord_user_id, u.discord_connected_at, u.bio, u.created_at;
 
 alter table public.projects enable row level security;
 alter table public.project_verification_requests enable row level security;
@@ -378,6 +388,18 @@ create policy "Project members are readable" on public.project_members
 drop policy if exists "Project members can be created for MVP" on public.project_members;
 create policy "Project members can be created for MVP" on public.project_members
   for insert with check (wallet_address = lower(wallet_address));
+
+drop policy if exists "Project members can be updated for MVP" on public.project_members;
+create policy "Project members can be updated for MVP" on public.project_members
+  for update using (true) with check (
+    wallet_address = lower(wallet_address)
+    and role in ('owner', 'community_manager')
+    and status in ('pending', 'active', 'rejected')
+  );
+
+drop policy if exists "Project members can be deleted for MVP" on public.project_members;
+create policy "Project members can be deleted for MVP" on public.project_members
+  for delete using (true);
 
 drop policy if exists "Campaigns are readable" on public.campaigns;
 create policy "Campaigns are readable" on public.campaigns

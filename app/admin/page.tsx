@@ -4,8 +4,8 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
 import { Archive, ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Download, ExternalLink, FolderPlus, Gift, Pencil, PlusCircle, Rocket, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
-import { addCampaignPartner, createCampaign, createEvent, createLaunch, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableLaunches, getManageableProjects, getManageableQuests, getProjectVerificationRequests, getProjects, getQualifiedUsers, getQuestSubmissions, removeCampaignPartner, requestProjectVerification, reviewCampaignPartner, reviewProject, reviewProjectVerificationRequest, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
-import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventRewardType, LaunchType, Project, ProjectInput, ProjectLaunch, ProjectLaunchInput, ProjectType, ProjectVerificationRequest, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
+import { addCampaignPartner, createCampaign, createEvent, createLaunch, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableLaunches, getManageableProjects, getManageableQuests, getProjectTeamMembers, getProjectVerificationRequests, getProjects, getQualifiedUsers, getQuestSubmissions, inviteCommunityManager, removeCampaignPartner, removeProjectTeamMember, requestProjectVerification, reviewCampaignPartner, reviewProject, reviewProjectTeamInvite, reviewProjectVerificationRequest, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
+import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventRewardType, LaunchType, Project, ProjectInput, ProjectLaunch, ProjectLaunchInput, ProjectMember, ProjectType, ProjectVerificationRequest, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, fromDatetimeLocalValue, isQuestEnded, toDatetimeLocalValue } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp, difficultyLabels, getQuestXpPolicy, questTypeLabels } from "@/lib/xp-policy";
 
@@ -284,6 +284,11 @@ function canProjectUseCampaign(projectId: string | null | undefined, campaign: C
   return Boolean(projectId && (campaign.project_id === projectId || campaign.partner_project_ids?.includes(projectId)));
 }
 
+function formatWallet(wallet?: string | null) {
+  if (!wallet) return "Unknown wallet";
+  return `${wallet.slice(0, 6)}...${wallet.slice(-4)}`;
+}
+
 export default function AdminPage() {
   const { address, isConnected } = useAccount();
   const [adminContext, setAdminContext] = useState<AdminContext | null>(null);
@@ -292,6 +297,7 @@ export default function AdminPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [launches, setLaunches] = useState<ProjectLaunch[]>([]);
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([]);
   const [managedQuests, setManagedQuests] = useState<Quest[]>([]);
   const [submissions, setSubmissions] = useState<UserQuest[]>([]);
   const [qualifiedUsers, setQualifiedUsers] = useState<QualifiedUser[]>([]);
@@ -313,9 +319,11 @@ export default function AdminPage() {
   const [activeStudioTab, setActiveStudioTab] = useState<StudioTab>("overview");
   const [questListFilter, setQuestListFilter] = useState<QuestListFilter>("active");
   const [campaignPartnerProjectIds, setCampaignPartnerProjectIds] = useState<Record<string, string>>({});
+  const [teamInviteWallets, setTeamInviteWallets] = useState<Record<string, string>>({});
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [verificationForms, setVerificationForms] = useState<Record<string, { reason: string; proof_url: string }>>({});
   const [verificationReviewNotes, setVerificationReviewNotes] = useState<Record<string, string>>({});
+  const [submittingVerificationProjectId, setSubmittingVerificationProjectId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const selectedProject = projects.find((project) => project.id === form.project_id);
   const selectedCampaign = campaigns.find((campaign) => campaign.id === form.campaign_id);
@@ -338,6 +346,9 @@ export default function AdminPage() {
   const activeQuestsCount = managedQuests.filter((quest) => quest.status === "active" && !isQuestEnded(quest.ends_at)).length;
   const liveEventsCount = events.filter((event) => event.status === "active" && (!event.ends_at || !isQuestEnded(event.ends_at))).length;
   const activeLaunchesCount = launches.filter((launch) => launch.status === "active").length;
+  const pendingTeamInvites = projectMembers.filter((member) => member.status === "pending" && member.wallet_address === address?.toLowerCase()).length;
+  const connectedWallet = address?.toLowerCase() ?? "";
+  const pendingTeamInviteRows = projectMembers.filter((member) => member.status === "pending" && member.wallet_address === connectedWallet);
   const filteredQualifiedUsers = useMemo(
     () =>
       qualifiedUsers.filter(
@@ -395,6 +406,14 @@ export default function AdminPage() {
     };
   }
 
+  function getProjectTeam(projectId: string) {
+    return projectMembers.filter((member) => member.project_id === projectId);
+  }
+
+  function canManageProjectTeam(project: Project) {
+    return Boolean(adminContext?.is_platform_admin || (connectedWallet && project.owner_wallet_address === connectedWallet));
+  }
+
   useEffect(() => {
     if (!address) {
       setAdminContext(null);
@@ -403,6 +422,7 @@ export default function AdminPage() {
       setCampaigns([]);
       setEvents([]);
       setLaunches([]);
+      setProjectMembers([]);
       setManagedQuests([]);
       setSubmissions([]);
       setQualifiedUsers([]);
@@ -445,6 +465,7 @@ export default function AdminPage() {
       });
     getManageableEvents(address).then(setEvents).catch(() => setEvents([]));
     getManageableLaunches(address).then(setLaunches).catch(() => setLaunches([]));
+    getProjectTeamMembers(address).then(setProjectMembers).catch(() => setProjectMembers([]));
     getManageableQuests(address).then(setManagedQuests);
     getQuestSubmissions(address).then(setSubmissions);
     getQualifiedUsers(address).then(setQualifiedUsers);
@@ -482,6 +503,7 @@ export default function AdminPage() {
     setCampaignForm((current) => ({ ...current, project_id: project.id }));
     setEventForm((current) => ({ ...current, project_id: project.id }));
     setProjectForm(initialProjectForm);
+    setProjectMembers(await getProjectTeamMembers(address));
     setMessage(project.status === "active" ? "Project created and active." : "Project submitted. Platform admin must approve it before it appears publicly.");
   }
 
@@ -509,6 +531,7 @@ export default function AdminPage() {
       setProjects(projectRows);
       setCampaigns(await getManageableCampaigns(address));
       setManagedQuests(await getManageableQuests(address));
+      setProjectMembers(await getProjectTeamMembers(address));
       setEditingProjectId(null);
       setEditProjectForm(initialProjectForm);
       setMessage("Project profile updated.");
@@ -595,6 +618,64 @@ export default function AdminPage() {
       setMessage(status === "active" ? "Collab invite accepted." : "Collab invite rejected.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to review campaign partner invite.");
+    }
+  }
+
+  async function handleInviteCommunityManager(project: Project) {
+    if (!address) {
+      setMessage("Connect the project owner wallet before inviting a Community Manager.");
+      return;
+    }
+
+    const wallet = teamInviteWallets[project.id]?.trim();
+    if (!wallet) {
+      setMessage("Enter the Community Manager wallet or Questora username.");
+      return;
+    }
+
+    try {
+      await inviteCommunityManager(project.id, wallet, address);
+      setProjectMembers(await getProjectTeamMembers(address));
+      setTeamInviteWallets((current) => ({ ...current, [project.id]: "" }));
+      setMessage("Community Manager invite sent.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to invite Community Manager.");
+    }
+  }
+
+  async function handleReviewTeamInvite(member: ProjectMember, status: "active" | "rejected") {
+    if (!address) {
+      setMessage("Connect the invited wallet before reviewing this team invite.");
+      return;
+    }
+
+    try {
+      await reviewProjectTeamInvite(member.id, status, address);
+      setAdminContext(await getAdminContext(address));
+      setProjects(await getManageableProjects(address));
+      setCampaigns(await getManageableCampaigns(address));
+      setEvents(await getManageableEvents(address));
+      setLaunches(await getManageableLaunches(address));
+      setManagedQuests(await getManageableQuests(address));
+      setProjectMembers(await getProjectTeamMembers(address));
+      setMessage(status === "active" ? "Team invite accepted." : "Team invite rejected.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to review team invite.");
+    }
+  }
+
+  async function handleRemoveProjectTeamMember(member: ProjectMember) {
+    if (!address) {
+      setMessage("Connect the project owner wallet before removing a team member.");
+      return;
+    }
+
+    try {
+      await removeProjectTeamMember(member.id, address);
+      setProjectMembers(await getProjectTeamMembers(address));
+      setMessage("Community Manager removed.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to remove team member.");
     }
   }
 
@@ -776,12 +857,15 @@ export default function AdminPage() {
 
     const formState = verificationForms[project.id] ?? { reason: "", proof_url: "" };
     try {
+      setSubmittingVerificationProjectId(project.id);
       await requestProjectVerification(project.id, formState, address);
       setVerificationRequests(await getProjectVerificationRequests(address));
       setVerificationForms((current) => ({ ...current, [project.id]: { reason: "", proof_url: "" } }));
-      setMessage("Verification request submitted. Next step: join the Questora Discord when it opens and create an ownership verification ticket.");
+      setMessage("Verification request submitted. Next step: join the Questora Discord and create an ownership verification ticket.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to request verification.");
+    } finally {
+      setSubmittingVerificationProjectId(null);
     }
   }
 
@@ -977,7 +1061,17 @@ export default function AdminPage() {
               : `Manageable projects: ${adminContext?.project_ids.length ?? 0}`}
           </span>
         ) : null}
+        {pendingTeamInvites > 0 ? (
+          <span className="mt-2 inline-flex rounded-full bg-cyan-200 px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">
+            {pendingTeamInvites} team invite{pendingTeamInvites === 1 ? "" : "s"} waiting
+          </span>
+        ) : null}
       </div>
+      {message ? (
+        <div className="mt-4 rounded-lg border border-cyan-200/25 bg-cyan-200/10 px-4 py-3 text-sm font-bold leading-6 text-cyan-100" role="status">
+          {message}
+        </div>
+      ) : null}
 
       <div className="mt-6 overflow-x-auto rounded-lg border border-white/10 bg-[#0b1730]/92 p-2 shadow-glow">
         <div className="flex min-w-max gap-2">
@@ -1174,6 +1268,49 @@ export default function AdminPage() {
 
       {activeStudioTab === "projects" ? (
         <>
+      {pendingTeamInviteRows.length > 0 ? (
+        <section className="mt-8 rounded-lg border border-cyan-200/25 bg-cyan-200/10 p-6 shadow-glow">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-black uppercase tracking-wider text-cyan-200">Team invites</p>
+              <h2 className="mt-1 text-xl font-black text-white">Review Community Manager invitations</h2>
+              <p className="mt-2 text-sm leading-6 text-blue-100">Accept an invite to help manage quests, campaigns, submissions, and launches for that project.</p>
+            </div>
+            <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-wider text-base-blue">{pendingTeamInviteRows.length} pending</span>
+          </div>
+          <div className="mt-5 grid gap-3">
+            {pendingTeamInviteRows.map((member) => (
+              <article key={member.id} className="flex flex-col gap-4 rounded-lg border border-white/10 bg-white/10 p-4 md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-full bg-cyan-200 px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">Community Manager</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100">Pending invite</span>
+                  </div>
+                  <h3 className="mt-3 truncate text-lg font-black text-white">{member.project_name ?? "Project invite"}</h3>
+                  <p className="mt-1 break-all text-sm font-semibold text-blue-100">{member.project_slug ? `/${member.project_slug}` : member.project_id}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:min-w-60">
+                  <button
+                    type="button"
+                    onClick={() => handleReviewTeamInvite(member, "active")}
+                    className="focus-ring rounded-lg bg-emerald-300 px-4 py-2.5 text-sm font-black text-slate-950"
+                  >
+                    Accept
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleReviewTeamInvite(member, "rejected")}
+                    className="focus-ring rounded-lg bg-rose-300 px-4 py-2.5 text-sm font-black text-slate-950"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <form onSubmit={handleProjectSubmit} className="mt-8 rounded-lg border border-white/10 bg-[#0b1730]/92 p-6 shadow-glow">
         <div className="flex items-center gap-3">
           <FolderPlus className="text-cyan-200" />
@@ -1586,7 +1723,7 @@ export default function AdminPage() {
                           )}
                           {getLatestVerificationRequest(project.id)?.status === "submitted" ? (
                             <p className="mt-2 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-3 text-xs font-semibold leading-5 text-cyan-100">
-                              Pending team review. Discord ownership verification will be required once the official Questora Discord is live.
+                              Pending team review. Join the Questora Discord and create an ownership verification ticket so the team can confirm this project.
                             </p>
                           ) : null}
                           {getLatestVerificationRequest(project.id)?.status !== "submitted" ? (
@@ -1606,7 +1743,10 @@ export default function AdminPage() {
                                 placeholder="Why should this project be verified? Mention official links, community proof, or launch context."
                               />
                               <p className="text-xs font-semibold leading-5 text-blue-200">
-                                After submitting, join the Questora Discord when it opens and create an ownership verification ticket. We will announce the official Discord link soon.
+                                Write at least 8 characters so the Questora team has context for the review.
+                              </p>
+                              <p className="text-xs font-semibold leading-5 text-blue-200">
+                                After submitting, join the Questora Discord and create an ownership verification ticket.
                               </p>
                               <input
                                 value={verificationForms[project.id]?.proof_url ?? ""}
@@ -1625,16 +1765,97 @@ export default function AdminPage() {
                               <button
                                 type="button"
                                 onClick={() => handleVerificationRequest(project)}
-                                disabled={project.status !== "active"}
+                                disabled={project.status !== "active" || submittingVerificationProjectId === project.id}
                                 className="focus-ring rounded-lg bg-cyan-200 px-3 py-2 text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                Request verification
+                                {submittingVerificationProjectId === project.id ? "Submitting..." : "Request verification"}
                               </button>
                               {project.status !== "active" ? <p className="text-xs font-semibold text-blue-200">Project must be approved before verification can be requested.</p> : null}
                             </div>
                           ) : null}
                         </div>
                       ) : null}
+                      <div className="rounded-lg border border-white/10 bg-white/10 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-black uppercase tracking-wider text-blue-200">Project team</p>
+                            <p className="mt-1 text-xs font-semibold text-blue-100">Owner and Community Manager access.</p>
+                          </div>
+                          <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-wider text-blue-100">
+                            {getProjectTeam(project.id).filter((member) => member.status === "active").length} active
+                          </span>
+                        </div>
+                        <div className="mt-3 grid gap-2">
+                          <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-sm font-black text-white">{formatWallet(project.owner_wallet_address)}</p>
+                              <p className="text-xs font-bold uppercase tracking-wider text-cyan-200">Project Owner</p>
+                            </div>
+                            <span className="w-fit rounded-full bg-emerald-300 px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">Active</span>
+                          </div>
+                          {getProjectTeam(project.id)
+                            .filter((member) => member.role !== "owner")
+                            .map((member) => (
+                              <div key={member.id} className="flex flex-col gap-3 rounded-lg border border-white/10 bg-white/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                  <p className="text-sm font-black text-white">{formatWallet(member.wallet_address)}</p>
+                                  <p className="text-xs font-bold uppercase tracking-wider text-blue-200">
+                                    Community Manager · {member.status}
+                                  </p>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  {member.status === "pending" && member.wallet_address === connectedWallet ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleReviewTeamInvite(member, "active")}
+                                        className="focus-ring rounded-lg bg-emerald-300 px-3 py-2 text-xs font-black text-slate-950"
+                                      >
+                                        Accept
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleReviewTeamInvite(member, "rejected")}
+                                        className="focus-ring rounded-lg bg-rose-300 px-3 py-2 text-xs font-black text-slate-950"
+                                      >
+                                        Reject
+                                      </button>
+                                    </>
+                                  ) : null}
+                                  {canManageProjectTeam(project) && member.status !== "rejected" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveProjectTeamMember(member)}
+                                      className="focus-ring rounded-lg bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white hover:text-base-blue"
+                                    >
+                                      Remove
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          {getProjectTeam(project.id).filter((member) => member.role !== "owner").length === 0 ? (
+                            <p className="rounded-lg border border-dashed border-white/10 bg-white/5 p-3 text-xs font-semibold text-blue-200">No Community Managers invited yet.</p>
+                          ) : null}
+                        </div>
+                        {canManageProjectTeam(project) ? (
+                          <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                            <input
+                              value={teamInviteWallets[project.id] ?? ""}
+                              onChange={(event) => setTeamInviteWallets((current) => ({ ...current, [project.id]: event.target.value }))}
+                              className="focus-ring rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-blue-200/60"
+                              placeholder="0x wallet, X username, Discord, or display name"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleInviteCommunityManager(project)}
+                              className="focus-ring rounded-lg bg-cyan-200 px-3 py-2 text-sm font-black text-slate-950"
+                            >
+                              Invite CM
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                       <button
                         type="button"
                         onClick={() => handleEditProject(project)}
@@ -2891,7 +3112,7 @@ export default function AdminPage() {
         </div>
         <div className="mt-5 grid gap-3">
           {!isConnected ? (
-            <p className="text-blue-100">Connect a project owner or reviewer wallet to review submissions.</p>
+            <p className="text-blue-100">Connect a project owner or Community Manager wallet to review submissions.</p>
           ) : submissions.length === 0 ? (
             <p className="text-blue-100">No pending submissions for projects owned by this wallet.</p>
           ) : (

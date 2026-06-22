@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { ChangeEvent, FormEvent, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from "react";
 import { useAccount } from "wagmi";
-import { Award, BadgeCheck, Clock3, ExternalLink, ImageUp, Loader2, Medal, Save, UserRound, Wallet } from "lucide-react";
+import { Award, BadgeCheck, Bot, Clock3, ExternalLink, ImageUp, Loader2, Medal, RefreshCw, Save, UserRound, Wallet } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import { getOrCreateUser, getUserCompletions, updateUserProfile } from "@/lib/quest-service";
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
@@ -80,29 +80,64 @@ export default function ProfilePage() {
   });
   const [message, setMessage] = useState("");
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [syncingDiscord, setSyncingDiscord] = useState(false);
+  const [discordStatus, setDiscordStatus] = useState<string | null>(null);
 
   useEffect(() => {
-    async function load() {
-      if (!address) {
-        setUser(null);
-        setCompletions([]);
-        return;
-      }
+    const searchParams = new URLSearchParams(window.location.search);
+    const status = searchParams.get("discord");
+    if (!status) return;
+    setDiscordStatus(status);
 
-      const profile = await getOrCreateUser(address);
-      setUser(profile);
-      setProfileForm({
-        display_name: profile.display_name ?? "",
-        avatar_url: profile.avatar_url ?? "",
-        x_username: profile.x_username ?? "",
-        discord_username: profile.discord_username ?? "",
-        bio: profile.bio ?? ""
-      });
-      setCompletions(await getUserCompletions(profile.id));
+    const messages: Record<string, string> = {
+      connected: "Discord connected. You can sync roles now.",
+      wallet_required: "Connect a wallet before connecting Discord.",
+      invalid_state: "Discord connection expired. Try connecting again.",
+      missing_config: "Discord is not configured yet.",
+      token_failed: "Discord authorization failed. Try again.",
+      token_network_failed: "Questora could not reach Discord from the server. Try again after restarting the local server.",
+      token_parse_failed: "Discord returned an unreadable authorization response. Try connecting again.",
+      invalid_grant: "Discord authorization expired or redirect URI changed. Start Connect Discord again.",
+      profile_failed: "Could not read your Discord profile.",
+      profile_network_failed: "Questora could not read your Discord profile from the server. Try again.",
+      database_failed: "Could not save Discord connection. Run the Discord SQL migration first.",
+      callback_failed: "Discord connection could not be completed. Check Discord env values and try again."
+    };
+
+    const databaseCode = searchParams.get("db");
+    const databaseHint = status === "database_failed" && databaseCode ? ` Code: ${databaseCode}.` : "";
+    setMessage(`${messages[status] ?? "Discord connection could not be completed."}${databaseHint}`);
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []);
+
+  const loadProfile = useCallback(async () => {
+    if (!address) {
+      setUser(null);
+      setCompletions([]);
+      return;
     }
 
-    load();
+    const profile = await getOrCreateUser(address);
+    setUser(profile);
+    setProfileForm({
+      display_name: profile.display_name ?? "",
+      avatar_url: profile.avatar_url ?? "",
+      x_username: profile.x_username ?? "",
+      discord_username: profile.discord_username ?? "",
+      bio: profile.bio ?? ""
+    });
+    setCompletions(await getUserCompletions(profile.id));
   }, [address]);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  useEffect(() => {
+    if (discordStatus === "connected") {
+      loadProfile();
+    }
+  }, [discordStatus, loadProfile]);
 
   async function handleProfileSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -170,6 +205,36 @@ export default function ProfilePage() {
       setMessage(error instanceof Error ? error.message : "Failed to upload avatar.");
     } finally {
       setUploadingAvatar(false);
+    }
+  }
+
+  async function handleDiscordSync() {
+    if (!address) {
+      setMessage("Connect a wallet before syncing Discord roles.");
+      return;
+    }
+
+    setSyncingDiscord(true);
+    setMessage("Syncing Discord roles...");
+
+    try {
+      const response = await fetch("/api/discord/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wallet: address })
+      });
+      const result = (await response.json()) as { synced?: string[]; removed?: string[]; missingConfig?: string[]; error?: string };
+
+      if (!response.ok) {
+        throw new Error(result.error ?? "Discord role sync failed.");
+      }
+
+      const synced = result.synced?.length ? result.synced.join(", ") : "no new roles";
+      setMessage(`Discord roles synced: ${synced}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Discord role sync failed.");
+    } finally {
+      setSyncingDiscord(false);
     }
   }
 
@@ -291,6 +356,37 @@ export default function ProfilePage() {
             <h2 className="text-xl font-bold text-white">Wallet</h2>
           </div>
           <p className="mb-6 break-all text-blue-100">{address ?? "No wallet connected yet."}</p>
+          <div className="mb-6 rounded-lg border border-cyan-200/20 bg-cyan-200/10 p-4">
+            <div className="flex items-start gap-3">
+              <Bot className="mt-1 shrink-0 text-cyan-200" />
+              <div className="min-w-0 flex-1">
+                <h2 className="text-xl font-bold text-white">Discord roles</h2>
+                <p className="mt-2 text-sm leading-6 text-blue-100">
+                  {user?.discord_user_id ? `Connected as ${user.discord_username ?? "Discord user"}.` : "Connect Discord to receive Questora server roles."}
+                </p>
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                  <a
+                    href={address ? `/api/auth/discord/start?wallet=${encodeURIComponent(address)}` : "#"}
+                    className={`focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-black text-base-blue transition hover:bg-cyan-100 ${!address ? "pointer-events-none opacity-50" : ""}`}
+                  >
+                    <Bot size={17} />
+                    {user?.discord_user_id ? "Reconnect Discord" : "Connect Discord"}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={handleDiscordSync}
+                    disabled={!address || !user?.discord_user_id || syncingDiscord}
+                    className="focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-base-blue px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {syncingDiscord ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />}
+                    Sync roles
+                  </button>
+                </div>
+                <p className="mt-3 text-xs font-semibold leading-5 text-blue-200">Join the Questora Discord server before syncing roles.</p>
+                {message ? <p className="mt-3 rounded-lg border border-white/10 bg-white/10 p-3 text-xs font-bold leading-5 text-cyan-100">{message}</p> : null}
+              </div>
+            </div>
+          </div>
           <h2 className="text-xl font-bold text-white">Badge shelf</h2>
           <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
             {mockBadges.map((badge) => (
