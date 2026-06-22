@@ -30,9 +30,11 @@ async function serverFetch(input: RequestInfo | URL, init?: RequestInit): Promis
         const chunks: Buffer[] = [];
         response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
         response.on("end", () => {
+          const status = response.statusCode ?? 500;
+          const responseBody = status === 204 || status === 304 ? null : Buffer.concat(chunks);
           resolve(
-            new Response(Buffer.concat(chunks), {
-              status: response.statusCode ?? 500,
+            new Response(responseBody, {
+              status,
               statusText: response.statusMessage,
               headers: response.headers as HeadersInit
             })
