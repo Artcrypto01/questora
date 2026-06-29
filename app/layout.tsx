@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import "@rainbow-me/rainbowkit/styles.css";
 import "./globals.css";
+import { AppShell } from "@/components/AppShell";
 import { AppProviders } from "@/components/AppProviders";
-import { Footer } from "@/components/Footer";
-import { Header } from "@/components/Header";
 import { WalletRegistrar } from "@/components/WalletRegistrar";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://questora.xyz";
@@ -54,9 +53,7 @@ export default function RootLayout({
       <body>
         <AppProviders>
           <WalletRegistrar />
-          <Header />
-          <main>{children}</main>
-          <Footer />
+          <AppShell>{children}</AppShell>
         </AppProviders>
       </body>
     </html>
