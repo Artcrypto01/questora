@@ -18,6 +18,10 @@ function isProjectFeaturedActive(project: Project) {
   return Boolean(project.is_featured && (!project.featured_until || new Date(project.featured_until).getTime() > Date.now()));
 }
 
+function getEventDisplayEndsAt(event: Event) {
+  return event.campaign_id ? event.campaign_ends_at ?? event.ends_at : event.ends_at;
+}
+
 export default function DashboardPage() {
   return (
     <Suspense fallback={<div className="mx-auto max-w-7xl px-4 py-8 text-blue-100 sm:px-6 lg:px-8">Loading quests...</div>}>
@@ -121,8 +125,8 @@ function DashboardContent() {
   const endingSoonEvents = useMemo(
     () =>
       events
-        .filter((event) => event.ends_at)
-        .sort((a, b) => new Date(a.ends_at ?? 0).getTime() - new Date(b.ends_at ?? 0).getTime())
+        .filter((event) => getEventDisplayEndsAt(event))
+        .sort((a, b) => new Date(getEventDisplayEndsAt(a) ?? 0).getTime() - new Date(getEventDisplayEndsAt(b) ?? 0).getTime())
         .slice(0, 3),
     [events]
   );
@@ -206,7 +210,7 @@ function DashboardContent() {
                     </span>
                     <span className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-3 py-2">
                       <CalendarDays size={14} className="text-cyan-200" />
-                      {event.ends_at ? formatQuestDeadline(event.ends_at) : "Open"}
+                      {getEventDisplayEndsAt(event) ? formatQuestDeadline(getEventDisplayEndsAt(event)) : "Open"}
                     </span>
                   </div>
                 </div>

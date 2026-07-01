@@ -82,6 +82,8 @@ type EventWithJoins = Event & {
   } | null;
   campaigns?: {
     name: string;
+    status?: Quest["status"] | null;
+    ends_at?: string | null;
   } | null;
 };
 
@@ -95,6 +97,23 @@ type LaunchWithJoins = ProjectLaunch & {
   } | null;
   campaigns?: {
     name: string;
+  } | null;
+};
+
+type QuestWithJoins = Quest & {
+  projects?: {
+    name?: string | null;
+    status?: string | null;
+    logo_url?: string | null;
+    project_type?: Project["project_type"] | null;
+    is_verified?: boolean | null;
+    is_featured?: boolean | null;
+    featured_rank?: number | null;
+    featured_until?: string | null;
+  } | null;
+  campaigns?: {
+    status?: Quest["status"] | null;
+    ends_at?: string | null;
   } | null;
 };
 
@@ -120,6 +139,27 @@ function slugify(value: string) {
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isQuestVisibleForDashboard(quest: Pick<Quest, "status" | "campaign_id" | "ends_at" | "campaign_status">) {
+  if (quest.status !== "active") return false;
+  if (quest.campaign_id && quest.campaign_status !== "active") return false;
+  return !isQuestEnded(quest.ends_at);
+}
+
+function hydrateQuestJoins(quest: QuestWithJoins): Quest {
+  return {
+    ...quest,
+    project_name: quest.projects?.name ?? quest.project_name,
+    project_logo_url: quest.projects?.logo_url ?? quest.project_logo_url,
+    project_type: quest.projects?.project_type ?? quest.project_type,
+    project_is_verified: quest.projects?.is_verified ?? quest.project_is_verified,
+    project_is_featured: quest.projects?.is_featured ?? quest.project_is_featured,
+    project_featured_rank: quest.projects?.featured_rank ?? quest.project_featured_rank,
+    project_featured_until: quest.projects?.featured_until ?? quest.project_featured_until,
+    campaign_status: quest.campaigns?.status ?? quest.campaign_status,
+    campaign_ends_at: quest.campaigns?.ends_at ?? quest.campaign_ends_at
+  };
 }
 
 function getConfiguredPlatformAdmins() {
@@ -233,7 +273,9 @@ function hydrateEventJoins(event: Event, projects = localProjects, campaigns = l
     project_slug: event.project_slug ?? project?.slug,
     project_logo_url: event.project_logo_url ?? project?.logo_url,
     project_type: event.project_type ?? project?.project_type,
-    campaign_name: event.campaign_name ?? campaign?.name
+    campaign_name: event.campaign_name ?? campaign?.name,
+    campaign_status: event.campaign_status ?? campaign?.status,
+    campaign_ends_at: event.campaign_ends_at ?? campaign?.ends_at
   };
 }
 
@@ -244,7 +286,9 @@ function mapEvent(row: EventWithJoins): Event {
     project_slug: row.projects?.slug ?? row.project_slug,
     project_logo_url: row.projects?.logo_url ?? row.project_logo_url,
     project_type: row.projects?.project_type ?? row.project_type,
-    campaign_name: row.campaigns?.name ?? row.campaign_name
+    campaign_name: row.campaigns?.name ?? row.campaign_name,
+    campaign_status: row.campaigns?.status ?? row.campaign_status,
+    campaign_ends_at: row.campaigns?.ends_at ?? row.campaign_ends_at
   };
 }
 
@@ -294,8 +338,15 @@ function mapProjectMember(row: ProjectMemberWithProject): ProjectMember {
   };
 }
 
-function isEventVisible(event: Pick<Event, "status" | "ends_at">) {
-  return event.status === "active" && (!event.ends_at || new Date(event.ends_at).getTime() > Date.now());
+function getEventEffectiveEndsAt(event: Pick<Event, "campaign_id" | "ends_at" | "campaign_ends_at">) {
+  return event.campaign_id ? event.campaign_ends_at ?? event.ends_at : event.ends_at;
+}
+
+function isEventVisible(event: Pick<Event, "status" | "campaign_id" | "campaign_status" | "ends_at" | "campaign_ends_at">) {
+  if (event.status !== "active") return false;
+  if (event.campaign_id && event.campaign_status === "archived") return false;
+  const endsAt = getEventEffectiveEndsAt(event);
+  return !endsAt || new Date(endsAt).getTime() > Date.now();
 }
 
 function getLaunchState(launch: Pick<ProjectLaunch, "status" | "starts_at">) {
@@ -608,41 +659,29 @@ export async function getQuests(): Promise<Quest[]> {
   if (!hasSupabaseConfig) {
     return localQuests.filter((quest) => {
       const project = localProjects.find((item) => item.id === quest.project_id);
-      return quest.status === "active" && !isQuestEnded(quest.ends_at) && project?.status === "active";
+      const campaign = quest.campaign_id ? localCampaigns.find((item) => item.id === quest.campaign_id) : null;
+      return project?.status === "active" && isQuestVisibleForDashboard({ ...quest, campaign_status: campaign?.status });
     }).map((quest) => {
       const project = localProjects.find((item) => item.id === quest.project_id);
-      return {
+      const campaign = quest.campaign_id ? localCampaigns.find((item) => item.id === quest.campaign_id) : null;
+      return hydrateQuestJoins({
         ...quest,
-        project_name: project?.name ?? quest.project_name,
-        project_logo_url: project?.logo_url,
-        project_type: project?.project_type,
-        project_is_verified: project?.is_verified,
-        project_is_featured: project?.is_featured,
-        project_featured_rank: project?.featured_rank,
-        project_featured_until: project?.featured_until
-      };
+        projects: project,
+        campaigns: campaign ? { status: campaign.status, ends_at: campaign.ends_at } : null
+      });
     });
   }
 
   const { data, error } = await assertSupabase()
     .from("quests")
-    .select("*, projects(name, status, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until)")
+    .select("*, projects(name, status, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until), campaigns(status, ends_at)")
     .eq("status", "active")
     .eq("projects.status", "active")
     .order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? [])
-    .filter((quest) => quest.projects?.status === "active" && !isQuestEnded(quest.ends_at))
-    .map((quest) => ({
-      ...quest,
-      project_name: quest.projects?.name,
-      project_logo_url: quest.projects?.logo_url,
-      project_type: quest.projects?.project_type,
-      project_is_verified: quest.projects?.is_verified,
-      project_is_featured: quest.projects?.is_featured,
-      project_featured_rank: quest.projects?.featured_rank,
-      project_featured_until: quest.projects?.featured_until
-    }));
+    .map((quest) => hydrateQuestJoins(quest as QuestWithJoins))
+    .filter((quest) => quest.project_name && isQuestVisibleForDashboard(quest));
 }
 
 export async function getQuestsByProject(projectId: string): Promise<Quest[]> {
@@ -743,39 +782,28 @@ export async function getQuestById(questId: string): Promise<Quest | null> {
     const quest = localQuests.find((item) => item.id === decodedQuestId);
     if (!quest) return null;
     const project = localProjects.find((item) => item.id === quest.project_id);
+    const campaign = quest.campaign_id ? localCampaigns.find((item) => item.id === quest.campaign_id) : null;
     if (project?.status !== "active" || quest.status === "archived") return null;
+    if (quest.campaign_id && campaign?.status === "archived") return null;
 
-    return {
+    return hydrateQuestJoins({
       ...quest,
-      project_name: project?.name ?? quest.project_name,
-      project_logo_url: project?.logo_url,
-      project_type: project?.project_type,
-      project_is_verified: project?.is_verified,
-      project_is_featured: project?.is_featured,
-      project_featured_rank: project?.featured_rank,
-      project_featured_until: project?.featured_until
-    };
+      projects: project,
+      campaigns: campaign ? { status: campaign.status, ends_at: campaign.ends_at } : null
+    });
   }
 
   const { data, error } = await assertSupabase()
     .from("quests")
-    .select("*, projects(name, status, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until)")
+    .select("*, projects(name, status, logo_url, project_type, is_verified, is_featured, featured_rank, featured_until), campaigns(status, ends_at)")
     .eq("id", decodedQuestId)
     .maybeSingle();
 
   if (error) throw error;
   if (!data || data.projects?.status !== "active" || data.status === "archived") return null;
+  if (data.campaign_id && data.campaigns?.status === "archived") return null;
 
-  return {
-    ...data,
-    project_name: data.projects?.name,
-    project_logo_url: data.projects?.logo_url,
-    project_type: data.projects?.project_type,
-    project_is_verified: data.projects?.is_verified,
-    project_is_featured: data.projects?.is_featured,
-    project_featured_rank: data.projects?.featured_rank,
-    project_featured_until: data.projects?.featured_until
-  };
+  return hydrateQuestJoins(data as QuestWithJoins);
 }
 
 export async function getProjects(): Promise<Project[]> {
@@ -1599,6 +1627,62 @@ export async function createCampaign(input: CampaignInput, actorWalletAddress?: 
   };
 }
 
+export async function updateCampaign(campaignId: string, input: CampaignInput, actorWalletAddress?: string | null): Promise<Campaign> {
+  const context = await getAdminContext(actorWalletAddress);
+  if (!context) throw new Error("Connect the campaign owner wallet before editing this campaign.");
+
+  const campaignInput = {
+    ...input,
+    slug: slugify(input.slug || input.name),
+    description: input.description?.trim() || null,
+    purpose: input.purpose?.trim() || null,
+    starts_at: input.starts_at || null,
+    ends_at: input.ends_at || null
+  };
+
+  if (!hasSupabaseConfig) {
+    const existing = localCampaigns.find((item) => item.id === campaignId);
+    if (!existing) throw new Error("Campaign not found.");
+    if (!hasProjectAccess(context, existing.project_id)) throw new Error("Only the campaign owner can edit this campaign.");
+    localCampaigns = localCampaigns.map((campaign) =>
+      campaign.id === campaignId
+        ? {
+            ...campaign,
+            ...campaignInput,
+            project_id: existing.project_id,
+            project_name: localProjects.find((item) => item.id === existing.project_id)?.name ?? existing.project_name
+          }
+        : campaign
+    );
+    return localCampaigns.find((item) => item.id === campaignId) as Campaign;
+  }
+
+  const client = assertSupabase();
+  const { data: existing, error: existingError } = await client.from("campaigns").select("id, project_id").eq("id", campaignId).single();
+  if (existingError) throw new Error(formatDatabaseError(existingError, "Failed to load campaign."));
+  if (!hasProjectAccess(context, existing.project_id)) throw new Error("Only the campaign owner can edit this campaign.");
+
+  const { data, error } = await client
+    .from("campaigns")
+    .update({
+      slug: campaignInput.slug,
+      name: campaignInput.name,
+      description: campaignInput.description,
+      purpose: campaignInput.purpose,
+      starts_at: campaignInput.starts_at,
+      ends_at: campaignInput.ends_at,
+      status: campaignInput.status
+    })
+    .eq("id", campaignId)
+    .select("*")
+    .single();
+  if (error) throw new Error(formatDatabaseError(error, "Failed to update campaign."));
+  return {
+    ...data,
+    project_name: (await getAllProjectsForAdmin(actorWalletAddress)).find((item) => item.id === data.project_id)?.name
+  };
+}
+
 export async function addCampaignPartner(campaignId: string, projectId: string, actorWalletAddress?: string | null): Promise<CampaignPartner> {
   const context = await getAdminContext(actorWalletAddress);
   if (!context) throw new Error("Connect a project owner wallet before adding campaign partners.");
@@ -1748,7 +1832,7 @@ export async function getEvents(limit = 6): Promise<Event[]> {
 
   const { data, error } = await assertSupabase()
     .from("events")
-    .select("*, projects(name, slug, logo_url, project_type), campaigns(name)")
+    .select("*, projects(name, slug, logo_url, project_type), campaigns(name, status, ends_at)")
     .eq("status", "active")
     .order("is_featured", { ascending: false })
     .order("featured_rank", { ascending: true })
@@ -1777,7 +1861,7 @@ export async function getManageableEvents(actorWalletAddress?: string | null): P
 
   const { data, error } = await assertSupabase()
     .from("events")
-    .select("*, projects(name, slug, logo_url, project_type), campaigns(name)")
+    .select("*, projects(name, slug, logo_url, project_type), campaigns(name, status, ends_at)")
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(formatDatabaseError(error, "Failed to load events."));

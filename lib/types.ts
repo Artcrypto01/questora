@@ -30,6 +30,8 @@ export type Quest = {
   project_is_featured?: boolean;
   project_featured_rank?: number | null;
   project_featured_until?: string | null;
+  campaign_status?: QuestStatus | null;
+  campaign_ends_at?: string | null;
 };
 
 export type UserProfile = {
@@ -268,6 +270,8 @@ export type Event = {
   project_logo_url?: string | null;
   project_type?: ProjectType;
   campaign_name?: string;
+  campaign_status?: QuestStatus | null;
+  campaign_ends_at?: string | null;
   partner_projects?: CampaignPartnerProject[];
 };
 

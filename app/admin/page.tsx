@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
 import { Archive, ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Download, ExternalLink, FolderPlus, Gift, Pencil, PlusCircle, Rocket, RotateCcw, Save, ShieldCheck, Star, UserRound, UsersRound, Wand2, XCircle } from "lucide-react";
 import { ProjectImage } from "@/components/ProjectImage";
-import { addCampaignPartner, createCampaign, createEvent, createLaunch, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableLaunches, getManageableProjects, getManageableQuests, getProjectTeamMembers, getProjectVerificationRequests, getProjects, getQualifiedUsers, getQuestSubmissions, inviteCommunityManager, removeCampaignPartner, removeProjectTeamMember, requestProjectVerification, reviewCampaignPartner, reviewProject, reviewProjectTeamInvite, reviewProjectVerificationRequest, reviewQuestSubmission, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
+import { addCampaignPartner, createCampaign, createEvent, createLaunch, createProject, createQuest, getAdminContext, getEventLeaderboard, getManageableCampaigns, getManageableEvents, getManageableLaunches, getManageableProjects, getManageableQuests, getProjectTeamMembers, getProjectVerificationRequests, getProjects, getQualifiedUsers, getQuestSubmissions, inviteCommunityManager, removeCampaignPartner, removeProjectTeamMember, requestProjectVerification, reviewCampaignPartner, reviewProject, reviewProjectTeamInvite, reviewProjectVerificationRequest, reviewQuestSubmission, updateCampaign, updateProject, updateProjectCuration, updateQuestStatus } from "@/lib/quest-service";
 import type { AdminContext, Campaign, CampaignInput, Event, EventInput, EventRewardType, LaunchType, Project, ProjectInput, ProjectLaunch, ProjectLaunchInput, ProjectMember, ProjectType, ProjectVerificationRequest, QualifiedUser, Quest, QuestDifficulty, QuestInput, QuestStatus, QuestType, UserQuest } from "@/lib/types";
 import { formatQuestDeadline, fromDatetimeLocalValue, isQuestEnded, toDatetimeLocalValue } from "@/lib/utils";
 import { calculateGlobalXp, clampProjectXp, difficultyLabels, getQuestXpPolicy, questTypeLabels } from "@/lib/xp-policy";
@@ -311,6 +311,8 @@ export default function AdminPage() {
   const [launchForm, setLaunchForm] = useState(initialLaunchForm);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editProjectForm, setEditProjectForm] = useState(initialProjectForm);
+  const [editingCampaignId, setEditingCampaignId] = useState<string | null>(null);
+  const [editCampaignForm, setEditCampaignForm] = useState(initialCampaignForm);
   const [curationForms, setCurationForms] = useState<Record<string, { featured_rank: string; featured_until: string }>>({});
   const [form, setForm] = useState(initialForm);
   const [selectedTemplate, setSelectedTemplate] = useState("");
@@ -566,6 +568,51 @@ export default function AdminPage() {
       setMessage("Campaign created. You can now assign quests to it.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to create campaign.");
+    }
+  }
+
+  function startCampaignEdit(campaign: Campaign) {
+    setEditingCampaignId(campaign.id);
+    setEditCampaignForm({
+      project_id: campaign.project_id ?? "",
+      slug: campaign.slug,
+      name: campaign.name,
+      description: campaign.description ?? "",
+      purpose: campaign.purpose ?? campaignPurposes[0],
+      starts_at: campaign.starts_at,
+      ends_at: campaign.ends_at,
+      status: campaign.status
+    });
+  }
+
+  async function handleCampaignEditSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!address || !editingCampaignId) {
+      setMessage("Connect the campaign owner wallet before editing this campaign.");
+      return;
+    }
+
+    if (editCampaignForm.starts_at && editCampaignForm.ends_at && new Date(editCampaignForm.ends_at).getTime() <= new Date(editCampaignForm.starts_at).getTime()) {
+      setMessage("Campaign end date must be after the start date.");
+      return;
+    }
+
+    if (editCampaignForm.status === "active" && editCampaignForm.ends_at && isQuestEnded(editCampaignForm.ends_at)) {
+      setMessage("Active campaigns need an end date in the future. Use Draft or Archived if this campaign should stay closed.");
+      return;
+    }
+
+    try {
+      await updateCampaign(editingCampaignId, editCampaignForm, address);
+      setCampaigns(await getManageableCampaigns(address));
+      setEvents(await getManageableEvents(address));
+      setLaunches(await getManageableLaunches(address));
+      setManagedQuests(await getManageableQuests(address));
+      setEditingCampaignId(null);
+      setEditCampaignForm(initialCampaignForm);
+      setMessage("Campaign updated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to update campaign.");
     }
   }
 
@@ -2539,7 +2586,10 @@ export default function AdminPage() {
               ) : campaigns.length === 0 ? (
                 <p className="text-blue-100">No campaigns yet. Create one to group related quests.</p>
               ) : (
-                campaigns.map((campaign) => (
+                campaigns.map((campaign) => {
+                  const canEditCampaign = Boolean(adminContext?.is_platform_admin || adminContext?.project_ids.includes(campaign.project_id ?? ""));
+                  const isEditingCampaign = editingCampaignId === campaign.id;
+                  return (
                   <article key={campaign.id} className="rounded-lg border border-white/10 bg-white/10 p-4">
                     <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
                       <div>
@@ -2555,6 +2605,112 @@ export default function AdminPage() {
                           {campaign.starts_at ? <span>Starts {formatQuestDeadline(campaign.starts_at)}</span> : null}
                           {campaign.ends_at ? <span>Ends {formatQuestDeadline(campaign.ends_at)}</span> : null}
                         </div>
+                        {canEditCampaign ? (
+                          <div className="mt-4">
+                            {isEditingCampaign ? (
+                              <form onSubmit={handleCampaignEditSubmit} className="rounded-lg border border-cyan-200/20 bg-[#061022]/80 p-4">
+                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                  <label className="grid gap-2">
+                                    <span className="text-xs font-black uppercase tracking-wider text-cyan-200">Campaign name</span>
+                                    <input
+                                      required
+                                      value={editCampaignForm.name}
+                                      onChange={(event) => setEditCampaignForm({ ...editCampaignForm, name: event.target.value })}
+                                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm font-bold text-white placeholder:text-blue-200/60"
+                                    />
+                                  </label>
+                                  <label className="grid gap-2">
+                                    <span className="text-xs font-black uppercase tracking-wider text-cyan-200">Slug</span>
+                                    <input
+                                      value={editCampaignForm.slug}
+                                      onChange={(event) => setEditCampaignForm({ ...editCampaignForm, slug: event.target.value })}
+                                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm font-bold text-white placeholder:text-blue-200/60"
+                                    />
+                                  </label>
+                                </div>
+                                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                  <label className="grid gap-2">
+                                    <span className="text-xs font-black uppercase tracking-wider text-cyan-200">Purpose</span>
+                                    <select
+                                      value={editCampaignForm.purpose ?? campaignPurposes[0]}
+                                      onChange={(event) => setEditCampaignForm({ ...editCampaignForm, purpose: event.target.value })}
+                                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm font-bold text-white"
+                                    >
+                                      {campaignPurposes.map((purpose) => (
+                                        <option key={purpose}>{purpose}</option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="grid gap-2">
+                                    <span className="text-xs font-black uppercase tracking-wider text-cyan-200">Status</span>
+                                    <select
+                                      value={editCampaignForm.status}
+                                      onChange={(event) => setEditCampaignForm({ ...editCampaignForm, status: event.target.value as QuestStatus })}
+                                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm font-bold text-white"
+                                    >
+                                      <option value="active">Active</option>
+                                      <option value="draft">Draft</option>
+                                      <option value="archived">Archived</option>
+                                    </select>
+                                  </label>
+                                </div>
+                                <label className="mt-4 grid gap-2">
+                                  <span className="text-xs font-black uppercase tracking-wider text-cyan-200">Description</span>
+                                  <textarea
+                                    value={editCampaignForm.description ?? ""}
+                                    onChange={(event) => setEditCampaignForm({ ...editCampaignForm, description: event.target.value })}
+                                    className="focus-ring min-h-24 rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm font-bold text-white placeholder:text-blue-200/60"
+                                  />
+                                </label>
+                                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                  <label className="grid gap-2">
+                                    <span className="text-xs font-black uppercase tracking-wider text-cyan-200">Starts</span>
+                                    <input
+                                      type="datetime-local"
+                                      value={toDatetimeLocalValue(editCampaignForm.starts_at)}
+                                      onChange={(event) => setEditCampaignForm({ ...editCampaignForm, starts_at: fromDatetimeLocalValue(event.target.value) })}
+                                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm font-bold text-white"
+                                    />
+                                  </label>
+                                  <label className="grid gap-2">
+                                    <span className="text-xs font-black uppercase tracking-wider text-cyan-200">Ends</span>
+                                    <input
+                                      type="datetime-local"
+                                      value={toDatetimeLocalValue(editCampaignForm.ends_at)}
+                                      onChange={(event) => setEditCampaignForm({ ...editCampaignForm, ends_at: fromDatetimeLocalValue(event.target.value) })}
+                                      className="focus-ring rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm font-bold text-white"
+                                    />
+                                  </label>
+                                </div>
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                  <button type="submit" className="focus-ring inline-flex items-center gap-2 rounded-lg bg-cyan-200 px-4 py-2 text-sm font-black text-slate-950">
+                                    <Save size={16} />
+                                    Save campaign
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingCampaignId(null);
+                                      setEditCampaignForm(initialCampaignForm);
+                                    }}
+                                    className="focus-ring rounded-lg bg-white/10 px-4 py-2 text-sm font-black text-white"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </form>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startCampaignEdit(campaign)}
+                                className="focus-ring inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-black text-base-blue"
+                              >
+                                <Pencil size={16} />
+                                Edit campaign
+                              </button>
+                            )}
+                          </div>
+                        ) : null}
                         <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.06] p-3">
                           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                             <div>
@@ -2640,7 +2796,8 @@ export default function AdminPage() {
                       </div>
                     </div>
                   </article>
-                ))
+                  );
+                })
               )}
             </div>
           </section>

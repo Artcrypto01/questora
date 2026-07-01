@@ -80,10 +80,11 @@ export default function EventDetailPage() {
     const submission = userSubmissions.get(quest.id);
     const approved = submission?.status === "approved" && Boolean(submission.reviewed_at);
     const submitted = submission?.status === "submitted";
+    const questEnded = isQuestEnded(quest.ends_at);
     return {
       id: quest.id,
       title: quest.title,
-      state: approved ? "done" : submitted ? "review" : "open"
+      state: approved ? "done" : submitted ? "review" : questEnded ? "ended" : "open"
     };
   });
 
@@ -177,12 +178,13 @@ export default function EventDetailPage() {
                   href={`/quests/${encodeURIComponent(row.id)}?campaign=${encodeURIComponent(event.campaign_id)}`}
                   className="focus-ring flex items-center gap-3 rounded-lg border border-white/10 bg-white/10 p-3 transition hover:border-cyan-200/60 hover:bg-white/15"
                 >
-                  {row.state === "done" ? <CheckCircle2 className="shrink-0 text-emerald-300" size={20} /> : row.state === "review" ? <Clock3 className="shrink-0 text-amber-200" size={20} /> : <Circle className="shrink-0 text-blue-200" size={20} />}
+                  {row.state === "done" ? <CheckCircle2 className="shrink-0 text-emerald-300" size={20} /> : row.state === "review" ? <Clock3 className="shrink-0 text-amber-200" size={20} /> : row.state === "ended" ? <Circle className="shrink-0 text-rose-300" size={20} /> : <Circle className="shrink-0 text-blue-200" size={20} />}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-black text-white">{row.title}</p>
-                    <p className="text-xs font-semibold text-blue-200">{row.state === "done" ? "Approved" : row.state === "review" ? "In review" : "Start quest"}</p>
+                    <p className="text-xs font-semibold text-blue-200">{row.state === "done" ? "Approved" : row.state === "review" ? "In review" : row.state === "ended" ? "Ended" : "Start quest"}</p>
                   </div>
                   {row.state === "open" ? <span className="hidden rounded-full bg-white px-3 py-1 text-xs font-black text-base-blue sm:inline-flex">Open</span> : null}
+                  {row.state === "ended" ? <span className="hidden rounded-full bg-rose-400 px-3 py-1 text-xs font-black text-slate-950 sm:inline-flex">Ended</span> : null}
                 </Link>
               ))
             )}
